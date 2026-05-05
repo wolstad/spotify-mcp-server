@@ -3,7 +3,7 @@
 <h1>Spotify MCP Server</h1>
 </div>
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that lets AI assistants like Claude and Cursor control Spotify playback and manage playlists.
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that lets AI assistants like Claude and Cursor control Spotify playback and manage playlists. Built to run as a native Node service — locally for stdio MCP clients, or on a LAN host (e.g. a Proxmox LXC) over HTTP.
 
 > **This is a fork of [marcelmarais/spotify-mcp-server](https://github.com/marcelmarais/spotify-mcp-server).** See [What's different in this fork](#whats-different-in-this-fork) for the changes.
 
@@ -11,8 +11,8 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that le
 <summary>Contents</summary>
 
 - [What's different in this fork](#whats-different-in-this-fork)
-- [Quick start (Docker — recommended)](#quick-start-docker--recommended)
-- [Quick start (local Node)](#quick-start-local-node)
+- [Quick start (local, stdio)](#quick-start-local-stdio)
+- [Remote install on a Proxmox LXC (HTTP transport)](#remote-install-on-a-proxmox-lxc-http-transport)
 - [Authentication & token refresh](#authentication--token-refresh)
 - [Integrating with Claude Desktop, Cursor, and Cline](#integrating-with-claude-desktop-cursor-and-cline)
 - [Tools](#tools)
@@ -21,10 +21,11 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that le
 
 ## What's different in this fork
 
-- **Docker-first**: ships with a `Dockerfile` and `docker-compose.yml`; running in a container is the recommended path.
-- **Env-only configuration**: credentials live in `.env`; OAuth tokens live in a machine-managed `.spotify-tokens` file (mode `0600`). No JSON config.
-- **Modern MCP API**: tools are registered via `server.registerTool()` with `title`, `inputSchema`, and behavior `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`) so MCP clients can route, batch, and confirm tools intelligently.
-- **Automatic token refresh**: access tokens refresh transparently when expired (1‑hour TTL).
+- **Native deployment, no Docker.** Runs as a plain Node service — locally over stdio (default) or on a network host over HTTP. A sample systemd unit ships in `deploy/spotify-mcp.service`.
+- **HTTP transport with bearer-token auth.** Set `MCP_TRANSPORT=http` to start a long-running HTTP MCP service; protected by `MCP_HTTP_TOKEN` (constant-time compared on every request).
+- **Env-only configuration.** Credentials live in `.env`; OAuth tokens live in a machine-managed `.spotify-tokens` file (mode `0600`). No JSON config.
+- **Modern MCP API.** Tools are registered via `server.registerTool()` with `title`, `inputSchema`, and behavior `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`) so MCP clients can route, batch, and confirm tools intelligently.
+- **Automatic token refresh.** Access tokens refresh transparently when expired (1‑hour TTL).
 - **Extra tools** beyond upstream:
   - **Album operations**: `getAlbums`, `getAlbumTracks`, `saveOrRemoveAlbumForUser`, `checkUsersSavedAlbums`.
   - **Playlist management**: `getPlaylist`, `updatePlaylist`, `removeTracksFromPlaylist`, `reorderPlaylistItems`.
@@ -35,37 +36,12 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that le
 ## Prerequisites
 
 - A Spotify Premium account
-- A registered [Spotify Developer application](https://developer.spotify.com/dashboard/) with `http://127.0.0.1:8888/callback` as a registered Redirect URI
-- One of:
-  - **Docker** (recommended) — Docker 24+ with `docker compose`
-  - **Node.js 22+** for the local-Node path
+- A registered [Spotify Developer application](https://developer.spotify.com/dashboard/) with `http://127.0.0.1:8888/callback` registered as a Redirect URI
+- Node.js 22+
 
-## Quick start (Docker — recommended)
+## Quick start (local, stdio)
 
-```bash
-git clone https://github.com/wolstad/spotify-mcp-server.git
-cd spotify-mcp-server
-
-# 1. Configure credentials
-cp .env.example .env
-# Edit .env with your Spotify Client ID, Secret, and Redirect URI.
-
-# 2. Authenticate ONCE on the host. This opens your browser, completes OAuth,
-#    and writes refresh tokens to ./.spotify-tokens (mode 0600, gitignored).
-#    Requires a local Node install just for this step.
-npm install
-npm run auth
-
-# 3. Build the image and run
-docker compose build
-docker compose run --rm spotify-mcp
-```
-
-The container reads `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, and `SPOTIFY_REDIRECT_URI` from `.env`, and mounts `./.spotify-tokens` so the refresh-token cache survives restarts. Token refresh happens automatically inside the container.
-
-If you ever need to re-authenticate, rerun `npm run auth` on the host — the new tokens will be picked up by the next container run.
-
-## Quick start (local Node)
+For running on the same machine as your MCP client (Claude Desktop, Cursor, Cline).
 
 ```bash
 git clone https://github.com/wolstad/spotify-mcp-server.git
@@ -73,10 +49,99 @@ cd spotify-mcp-server
 npm install
 npm run build
 
-cp .env.example .env  # then edit with your credentials
-npm run auth          # one-time OAuth flow
+cp .env.example .env  # then edit with your Spotify credentials
+npm run auth          # one-time OAuth flow (opens browser)
 node build/index.js   # runs the MCP server on stdio
 ```
+
+Then point your MCP client at `node /absolute/path/to/spotify-mcp-server/build/index.js` — see [Integrating with Claude Desktop, Cursor, and Cline](#integrating-with-claude-desktop-cursor-and-cline).
+
+## Remote install on a Proxmox LXC (HTTP transport)
+
+When the MCP client and server are on different machines, run the server in HTTP mode and point the client at the LXC's IP.
+
+### 1. Provision the LXC
+
+A 1 vCPU / 512 MB / 2 GB-disk Debian or Ubuntu LXC is plenty.
+
+Inside the container:
+
+```bash
+apt update && apt install -y nodejs npm git curl
+adduser --system --group --home /opt/spotify-mcp spotify-mcp
+```
+
+### 2. Install the app
+
+```bash
+sudo -u spotify-mcp -H bash <<'EOF'
+cd /opt/spotify-mcp
+git clone https://github.com/wolstad/spotify-mcp-server.git .
+npm ci
+npm run build
+EOF
+```
+
+### 3. Configure
+
+```bash
+sudo -u spotify-mcp cp /opt/spotify-mcp/.env.example /opt/spotify-mcp/.env
+sudo -u spotify-mcp -e /opt/spotify-mcp/.env   # edit
+```
+
+Set at minimum:
+
+```
+SPOTIFY_CLIENT_ID=…
+SPOTIFY_CLIENT_SECRET=…
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888/callback
+
+MCP_TRANSPORT=http
+MCP_HTTP_HOST=0.0.0.0
+MCP_HTTP_PORT=3000
+MCP_HTTP_TOKEN=$(openssl rand -hex 32)
+```
+
+> The bearer token is the **only** thing standing between the public LAN and full control of your Spotify account. Keep it long and keep it secret.
+
+### 4. One-time authentication
+
+OAuth needs a browser, which an LXC doesn't have. Two options:
+
+**Option A — auth on a workstation, copy tokens.** Run `npm run auth` on any machine with a browser, then `scp .spotify-tokens` to `/opt/spotify-mcp/.spotify-tokens`. Make sure file mode is `0600` and owner is `spotify-mcp`.
+
+**Option B — SSH-tunnel port 8888.** From your workstation:
+
+```bash
+ssh -L 8888:127.0.0.1:8888 youruser@<lxc-ip>
+# in that session:
+sudo -u spotify-mcp -H bash -c 'cd /opt/spotify-mcp && npm run auth'
+```
+
+Then click the URL printed in the terminal — the redirect goes to your local browser, which forwards through the tunnel back to the LXC's auth server.
+
+### 5. Install the systemd unit
+
+```bash
+sudo cp /opt/spotify-mcp/deploy/spotify-mcp.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now spotify-mcp
+sudo systemctl status spotify-mcp
+```
+
+### 6. Verify
+
+From your workstation:
+
+```bash
+curl -i -X POST http://<lxc-ip>:3000/mcp \
+  -H "Authorization: Bearer <your-token>" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+```
+
+You should see `200 OK` and an SSE-framed JSON response containing `serverInfo` for `spotify-controller`. A `401` means the bearer token didn't match.
 
 ## Authentication & token refresh
 
@@ -99,33 +164,7 @@ If a refresh ever fails (refresh token revoked, password changed, etc.), the ser
 
 ## Integrating with Claude Desktop, Cursor, and Cline
 
-### Docker integration (recommended)
-
-Add to your client's MCP config (paths must be absolute):
-
-```json
-{
-  "mcpServers": {
-    "spotify": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "--env-file",
-        "/absolute/path/to/spotify-mcp-server/.env",
-        "-v",
-        "/absolute/path/to/spotify-mcp-server/.spotify-tokens:/app/.spotify-tokens",
-        "spotify-mcp:local"
-      ]
-    }
-  }
-}
-```
-
-Build the image once with `docker compose build` (or `docker build -t spotify-mcp:local .`) before starting your client.
-
-### Local Node integration
+### Local (stdio)
 
 ```json
 {
@@ -155,6 +194,42 @@ For Cline (`cline_mcp_settings.json`):
 ```
 
 Read-only tools (annotated with `readOnlyHint: true`) are safe candidates for `autoApprove`. Tools that mutate state (`destructiveHint: true`, write tools) should generally require confirmation.
+
+### Remote (HTTP, e.g. Proxmox LXC)
+
+```json
+{
+  "mcpServers": {
+    "spotify": {
+      "url": "http://<lxc-ip>:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-token>"
+      }
+    }
+  }
+}
+```
+
+Replace `<lxc-ip>` with the IP of the LXC on your LAN and `<your-token>` with the value of `MCP_HTTP_TOKEN` from `.env` on the server.
+
+If your client doesn't yet support the remote MCP `url` field, you can bridge with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote):
+
+```json
+{
+  "mcpServers": {
+    "spotify": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://<lxc-ip>:3000/mcp",
+        "--header",
+        "Authorization: Bearer <your-token>"
+      ]
+    }
+  }
+}
+```
 
 ## Tools
 
@@ -222,7 +297,8 @@ Tests live in `src/*.test.ts`. The compile step (`tsc`) excludes `*.test.ts` fro
 
 ```
 src/
-  index.ts        # MCP server entry; registers every tool with annotations
+  index.ts        # entry point; selects transport (stdio | http) and registers tools
+  http.ts         # HTTP transport with bearer-token auth
   auth.ts         # `npm run auth` — one-shot OAuth flow
   utils.ts        # credential/token helpers, refresh logic
   types.ts        # shared types and the `defineTool()` helper
@@ -230,4 +306,6 @@ src/
   play.ts         # playback + create tools
   albums.ts       # album tools
   playlist.ts     # playlist management tools
+deploy/
+  spotify-mcp.service  # systemd unit template
 ```

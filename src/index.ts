@@ -5,6 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { albumTools } from './albums.js';
+import { loadHttpConfig, startHttpServer } from './http.js';
 import { playTools } from './play.js';
 import { playlistTools } from './playlist.js';
 import { readTools } from './read.js';
@@ -114,8 +115,17 @@ for (const tool of allTools) {
 }
 
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  const transport = (process.env.MCP_TRANSPORT ?? 'stdio').toLowerCase();
+  if (transport === 'http') {
+    await startHttpServer(server, loadHttpConfig());
+    return;
+  }
+  if (transport !== 'stdio') {
+    throw new Error(
+      `Unsupported MCP_TRANSPORT '${transport}'. Use 'stdio' (default) or 'http'.`,
+    );
+  }
+  await server.connect(new StdioServerTransport());
 }
 
 main().catch((error) => {
