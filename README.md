@@ -21,17 +21,15 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that le
 
 ## What's different in this fork
 
-- **Native deployment, no Docker.** Runs as a plain Node service — locally over stdio (default) or on a network host over HTTP. A sample systemd unit ships in `deploy/spotify-mcp.service`.
-- **HTTP transport with bearer-token auth.** Set `MCP_TRANSPORT=http` to start a long-running HTTP MCP service; protected by `MCP_HTTP_TOKEN` (constant-time compared on every request).
-- **Env-only configuration.** Credentials live in `.env`; OAuth tokens live in a machine-managed `.spotify-tokens` file (mode `0600`). No JSON config.
-- **Modern MCP API.** Tools are registered via `server.registerTool()` with `title`, `inputSchema`, and behavior `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`) so MCP clients can route, batch, and confirm tools intelligently.
-- **Automatic token refresh.** Access tokens refresh transparently when expired (1‑hour TTL).
-- **Extra tools** beyond upstream:
-  - **Album operations**: `getAlbums`, `getAlbumTracks`, `saveOrRemoveAlbumForUser`, `checkUsersSavedAlbums`.
-  - **Playlist management**: `getPlaylist`, `updatePlaylist`, `removeTracksFromPlaylist`, `reorderPlaylistItems`.
-  - **Device & volume control**: `getAvailableDevices`, `setVolume`, `adjustVolume`.
-  - **Queue & library**: `getQueue`, `getRecentlyPlayed`, `getUsersSavedTracks`, `removeUsersSavedTracks`, `addToQueue`.
-- **Modernized dependencies**: `@modelcontextprotocol/sdk` 1.29, `zod` 4, `dotenv`, `vitest` smoke tests, deps refreshed and audited.
+This fork is based on upstream commit [`969576b`](https://github.com/marcelmarais/spotify-mcp-server/commit/969576b) (the latest as of writing). The tool catalog is identical to upstream — the differences here are infrastructure, not new tools.
+
+- **HTTP transport with bearer-token auth.** Set `MCP_TRANSPORT=http` to start a long-running HTTP MCP service (`StreamableHTTPServerTransport`), protected by `MCP_HTTP_TOKEN` (constant-time compared on every request). Stdio remains the default. Upstream is stdio-only.
+- **Systemd unit template** in `deploy/spotify-mcp.service` — designed for installing the HTTP service on a small LXC or VM with sensible hardening (`NoNewPrivileges`, `ProtectSystem=strict`, restricted address families).
+- **Env-only configuration.** Credentials live in `.env`; OAuth tokens live in a machine-managed `.spotify-tokens` file (mode `0600`). Upstream uses a single `spotify-config.json` for both.
+- **Modern MCP API.** Every tool is registered via `server.registerTool()` with `title`, `inputSchema`, and behavior `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`) so MCP clients can route, batch, and confirm tools intelligently. Upstream still uses the deprecated `server.tool(name, description, schema, handler)` variadic API with no annotations.
+- **Standardized error returns.** All 27 tools return `{ content: [...], isError: true }` on failure. Upstream sets `isError` in only two places.
+- **Stdio-safe logging.** Runtime status messages (token-refresh notices, etc.) go to `stderr` instead of `stdout`, so they don't corrupt the JSON-RPC frames on the stdio transport. Upstream's `console.log` calls inside the runtime path can break stdio clients.
+- **Modernized dependencies**: `@modelcontextprotocol/sdk` 1.29 (vs upstream 1.10.1), `zod` 4 (vs 3), `dotenv` added, `vitest` smoke tests added, `npm audit` clean.
 
 ## Prerequisites
 
