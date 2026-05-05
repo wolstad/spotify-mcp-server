@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDuration, parseEnvFile } from './utils.js';
+import { formatDuration, formatTrackMeta, parseEnvFile } from './utils.js';
 
 describe('formatDuration', () => {
   it('formats sub-minute durations with leading zero', () => {
@@ -49,5 +49,39 @@ describe('parseEnvFile', () => {
       .map(([k, v]) => `${k}=${v}`)
       .join('\n')}\n`;
     expect(parseEnvFile(serialized)).toEqual(tokens);
+  });
+});
+
+describe('formatTrackMeta', () => {
+  it('returns empty string when no metadata is present', () => {
+    expect(formatTrackMeta({})).toBe('');
+  });
+
+  it('includes popularity, year, and explicit flag', () => {
+    expect(
+      formatTrackMeta({
+        popularity: 75,
+        explicit: true,
+        album: { release_date: '2024-03-15' },
+      }),
+    ).toBe(' [pop 75 · 2024 · E]');
+  });
+
+  it('omits the explicit flag when false', () => {
+    expect(
+      formatTrackMeta({
+        popularity: 50,
+        explicit: false,
+        album: { release_date: '2010' },
+      }),
+    ).toBe(' [pop 50 · 2010]');
+  });
+
+  it('reads release_date from the track when album is missing', () => {
+    expect(formatTrackMeta({ release_date: '1999-01-01' })).toBe(' [1999]');
+  });
+
+  it('includes popularity of 0 (not falsy-skipped)', () => {
+    expect(formatTrackMeta({ popularity: 0 })).toBe(' [pop 0]');
   });
 });

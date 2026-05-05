@@ -4,6 +4,7 @@ import type { SpotifyHandlerExtra, SpotifyTrack } from './types.js';
 import { defineTool } from './types.js';
 import {
   formatDuration,
+  formatTrackMeta,
   getCurrentAccessToken,
   handleSpotifyRequest,
 } from './utils.js';
@@ -56,22 +57,32 @@ const searchSpotify = defineTool({
           .map((track, i) => {
             const artists = track.artists.map((a) => a.name).join(', ');
             const duration = formatDuration(track.duration_ms);
+            const meta = formatTrackMeta(track);
             return `${i + 1}. "${
               track.name
-            }" by ${artists} (${duration}) - ID: ${track.id}`;
+            }" by ${artists} (${duration})${meta} - ID: ${track.id}`;
           })
           .join('\n');
       } else if (type === 'album' && results.albums) {
         formattedResults = results.albums.items
           .map((album, i) => {
             const artists = album.artists.map((a) => a.name).join(', ');
-            return `${i + 1}. "${album.name}" by ${artists} - ID: ${album.id}`;
+            const year = album.release_date?.slice(0, 4);
+            const yearStr = year ? ` (${year})` : '';
+            return `${i + 1}. "${album.name}" by ${artists}${yearStr} - ID: ${album.id}`;
           })
           .join('\n');
       } else if (type === 'artist' && results.artists) {
         formattedResults = results.artists.items
           .map((artist, i) => {
-            return `${i + 1}. ${artist.name} - ID: ${artist.id}`;
+            const genres = artist.genres?.length
+              ? ` [${artist.genres.slice(0, 3).join(', ')}]`
+              : '';
+            const pop =
+              typeof artist.popularity === 'number'
+                ? ` (pop ${artist.popularity})`
+                : '';
+            return `${i + 1}. ${artist.name}${pop}${genres} - ID: ${artist.id}`;
           })
           .join('\n');
       } else if (type === 'playlist' && results.playlists) {
@@ -153,6 +164,11 @@ const getNowPlaying = defineTool({
       const duration = formatDuration(item.duration_ms);
       const progress = formatDuration(playback.progress_ms || 0);
       const isPlaying = playback.is_playing;
+      const released = item.album.release_date ?? null;
+      const popularity = (item as { popularity?: number }).popularity;
+      const isrc = (item as { external_ids?: { isrc?: string } }).external_ids
+        ?.isrc;
+      const explicit = (item as { explicit?: boolean }).explicit;
 
       const device = playback.device;
       const deviceInfo = device
@@ -169,16 +185,15 @@ const getNowPlaying = defineTool({
         content: [
           {
             type: 'text',
-            text:
-              `# Currently ${isPlaying ? 'Playing' : 'Paused'}\n\n` +
-              `**Track**: "${item.name}"\n` +
-              `**Artist**: ${artists}\n` +
-              `**Album**: ${album}\n` +
-              `**Progress**: ${progress} / ${duration}\n` +
-              `**ID**: ${item.id}\n\n` +
-              `**Device**: ${deviceInfo}\n` +
-              `**Volume**: ${volume}\n` +
-              `**Shuffle**: ${shuffle} | **Repeat**: ${repeat}`,
+            text: `# Currently ${isPlaying ? 'Playing' : 'Paused'}\n\n**Track**: "${item.name}"\n**Artist**: ${artists}\n**Album**: ${album}\n${released ? `**Released**: ${released}\n` : ''}${
+              typeof popularity === 'number'
+                ? `**Popularity**: ${popularity}/100\n`
+                : ''
+            }${
+              typeof explicit === 'boolean'
+                ? `**Explicit**: ${explicit ? 'Yes' : 'No'}\n`
+                : ''
+            }${isrc ? `**ISRC**: ${isrc}\n` : ''}**Progress**: ${progress} / ${duration}\n**ID**: ${item.id}\n\n**Device**: ${deviceInfo}\n**Volume**: ${volume}\n**Shuffle**: ${shuffle} | **Repeat**: ${repeat}`,
           },
         ],
       };
@@ -298,7 +313,8 @@ const getPlaylistTracks = defineTool({
         if (isTrack(track)) {
           const artists = track.artists.map((a) => a.name).join(', ');
           const duration = formatDuration(track.duration_ms);
-          return `${offset + i + 1}. "${track.name}" by ${artists} (${duration}) - ID: ${track.id}`;
+          const meta = formatTrackMeta(track);
+          return `${offset + i + 1}. "${track.name}" by ${artists} (${duration})${meta} - ID: ${track.id}`;
         }
 
         return `${offset + i + 1}. Unknown item`;
@@ -355,10 +371,11 @@ const getRecentlyPlayed = defineTool({
         if (isTrack(track)) {
           const artists = track.artists.map((a) => a.name).join(', ');
           const duration = formatDuration(track.duration_ms);
+          const meta = formatTrackMeta(track);
           const playedAt = item.played_at
             ? new Date(item.played_at).toLocaleString()
             : 'Unknown time';
-          return `${i + 1}. "${track.name}" by ${artists} (${duration}) - ID: ${track.id} - Played at: ${playedAt}`;
+          return `${i + 1}. "${track.name}" by ${artists} (${duration})${meta} - ID: ${track.id} - Played at: ${playedAt}`;
         }
 
         return `${i + 1}. Unknown item`;
@@ -422,8 +439,9 @@ const getUsersSavedTracks = defineTool({
         if (isTrack(track)) {
           const artists = track.artists.map((a) => a.name).join(', ');
           const duration = formatDuration(track.duration_ms);
+          const meta = formatTrackMeta(track);
           const addedDate = new Date(item.added_at).toLocaleDateString();
-          return `${offset + i + 1}. "${track.name}" by ${artists} (${duration}) - ID: ${track.id} - Added: ${addedDate}`;
+          return `${offset + i + 1}. "${track.name}" by ${artists} (${duration})${meta} - ID: ${track.id} - Added: ${addedDate}`;
         }
 
         return `${i + 1}. Unknown item`;
@@ -478,7 +496,8 @@ const getQueue = defineTool({
           typeof current?.duration_ms === 'number'
             ? formatDuration(current.duration_ms)
             : 'Unknown';
-        currentText = `Currently Playing: "${name}" by ${artists} (${duration})`;
+        const meta = formatTrackMeta(current);
+        currentText = `Currently Playing: "${name}" by ${artists} (${duration})${meta}`;
       }
 
       if (upcoming.length === 0) {
@@ -506,7 +525,8 @@ const getQueue = defineTool({
               ? formatDuration(track.duration_ms)
               : 'Unknown';
           const id = track?.id ?? 'Unknown';
-          return `${i + 1}. "${name}" by ${artists} (${duration}) - ID: ${id}`;
+          const meta = formatTrackMeta(track);
+          return `${i + 1}. "${name}" by ${artists} (${duration})${meta} - ID: ${id}`;
         })
         .join('\n');
 

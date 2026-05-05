@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { albumTools } from './albums.js';
+import { enrichmentTools } from './enrichment.js';
 import { playTools } from './play.js';
 import { playlistTools } from './playlist.js';
 import { readTools } from './read.js';
 
-const allTools = [...readTools, ...playTools, ...albumTools, ...playlistTools];
+const allTools = [
+  ...readTools,
+  ...playTools,
+  ...albumTools,
+  ...playlistTools,
+  ...enrichmentTools,
+];
 
 describe('tool registration', () => {
   it('every tool has the required fields', () => {

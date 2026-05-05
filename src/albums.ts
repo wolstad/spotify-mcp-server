@@ -2,7 +2,11 @@ import type { MaxInt } from '@spotify/web-api-ts-sdk';
 import { z } from 'zod';
 import type { SpotifyHandlerExtra } from './types.js';
 import { defineTool } from './types.js';
-import { formatDuration, handleSpotifyRequest } from './utils.js';
+import {
+  formatDuration,
+  formatTrackMeta,
+  handleSpotifyRequest,
+} from './utils.js';
 
 const getAlbums = defineTool({
   name: 'getAlbums',
@@ -53,12 +57,19 @@ const getAlbums = defineTool({
         const releaseDate = album.release_date;
         const totalTracks = album.total_tracks;
         const albumType = album.album_type;
+        const label = album.label;
+        const popularity = (album as { popularity?: number }).popularity;
+        const genres = (album as { genres?: string[] }).genres ?? [];
 
         return {
           content: [
             {
               type: 'text',
-              text: `# Album Details\n\n**Name**: "${album.name}"\n**Artists**: ${artists}\n**Release Date**: ${releaseDate}\n**Type**: ${albumType}\n**Total Tracks**: ${totalTracks}\n**ID**: ${album.id}`,
+              text: `# Album Details\n\n**Name**: "${album.name}"\n**Artists**: ${artists}\n**Release Date**: ${releaseDate}\n**Type**: ${albumType}\n**Total Tracks**: ${totalTracks}\n${label ? `**Label**: ${label}\n` : ''}${
+                typeof popularity === 'number'
+                  ? `**Popularity**: ${popularity}/100\n`
+                  : ''
+              }${genres.length ? `**Genres**: ${genres.join(', ')}\n` : ''}**ID**: ${album.id}`,
             },
           ],
         };
@@ -144,7 +155,10 @@ const getAlbumTracks = defineTool({
 
           const artists = track.artists.map((a) => a.name).join(', ');
           const duration = formatDuration(track.duration_ms);
-          return `${offset + i + 1}. "${track.name}" by ${artists} (${duration}) - ID: ${track.id}`;
+          // SimplifiedTrack has explicit but no popularity/release_date — those
+          // belong to the parent album.
+          const meta = formatTrackMeta(track);
+          return `${offset + i + 1}. "${track.name}" by ${artists} (${duration})${meta} - ID: ${track.id}`;
         })
         .join('\n');
 

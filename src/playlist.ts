@@ -27,19 +27,18 @@ const getPlaylist = defineTool({
         ? `\n**Description**: ${playlist.description}`
         : '';
       const url = playlist.external_urls?.spotify ?? '';
+      const followers = (playlist as { followers?: { total?: number } })
+        .followers?.total;
 
       return {
         content: [
           {
             type: 'text',
-            text:
-              `# Playlist: "${playlist.name}"\n\n` +
-              `**Owner**: ${owner}\n` +
-              `**Tracks**: ${tracksTotal}\n` +
-              `**Visibility**: ${isPublic}${isCollaborative}` +
-              `${description}\n` +
-              `**ID**: ${playlist.id}\n` +
-              `**URL**: ${url}`,
+            text: `# Playlist: "${playlist.name}"\n\n**Owner**: ${owner}\n**Tracks**: ${tracksTotal}\n${
+              typeof followers === 'number'
+                ? `**Followers**: ${followers}\n`
+                : ''
+            }**Visibility**: ${isPublic}${isCollaborative}${description}\n**ID**: ${playlist.id}\n**URL**: ${url}`,
           },
         ],
       };
