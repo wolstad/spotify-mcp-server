@@ -39,6 +39,8 @@ This fork is based on upstream commit [`969576b`](https://github.com/marcelmarai
 - A registered [Spotify Developer application](https://developer.spotify.com/dashboard/) with `http://127.0.0.1:8888/callback` registered as a Redirect URI
 - Node.js 22+
 
+> **Redirect URI must match exactly.** Spotify allowlists the literal string. Use `127.0.0.1`, not `localhost` (deprecated for new apps). No trailing slash. `http`, not `https`. Any mismatch fails the OAuth callback.
+
 ## Quick start (local, stdio)
 
 For running on the same machine as your MCP client (Claude Desktop, Cursor, Cline).
@@ -67,9 +69,15 @@ A 1 vCPU / 512 MB / 2 GB-disk Debian or Ubuntu LXC is plenty.
 Inside the container:
 
 ```bash
-apt update && apt install -y nodejs npm git curl
+apt update && apt upgrade -y
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+apt install -y nodejs git curl
+node --version  # should print v22.x
+
 adduser --system --group --home /opt/spotify-mcp spotify-mcp
 ```
+
+> Debian/Ubuntu apt repos lag behind Node LTS — Debian 13 ships Node 20, but this server requires Node 22+. The NodeSource repo above bundles `npm`, so it's no longer a separate package.
 
 ### 2. Install the app
 
@@ -84,9 +92,19 @@ EOF
 
 ### 3. Configure
 
+First generate a bearer token — copy the output, you'll paste it into `.env` below:
+
+```bash
+openssl rand -hex 32
+```
+
+Copy the example env file and open it for editing. The `--system` `spotify-mcp` user has no login shell, so the most reliable pattern is to write through `bash`:
+
 ```bash
 sudo -u spotify-mcp cp /opt/spotify-mcp/.env.example /opt/spotify-mcp/.env
-sudo -u spotify-mcp -e /opt/spotify-mcp/.env   # edit
+sudo -u spotify-mcp -H bash -c 'nano /opt/spotify-mcp/.env'
+# or, if you prefer vim:
+# sudo EDITOR=vim -u spotify-mcp -e /opt/spotify-mcp/.env
 ```
 
 Set at minimum:
@@ -99,8 +117,10 @@ SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888/callback
 MCP_TRANSPORT=http
 MCP_HTTP_HOST=0.0.0.0
 MCP_HTTP_PORT=3000
-MCP_HTTP_TOKEN=$(openssl rand -hex 32)
+MCP_HTTP_TOKEN=<paste-generated-hex-here>
 ```
+
+> `.env` is read literally — `$(openssl rand -hex 32)` will **not** be expanded. Paste the actual hex string from the command above.
 
 > The bearer token is the **only** thing standing between the public LAN and full control of your Spotify account. Keep it long and keep it secret.
 
@@ -113,10 +133,12 @@ OAuth needs a browser, which an LXC doesn't have. Two options:
 **Option B — SSH-tunnel port 8888.** From your workstation:
 
 ```bash
-ssh -L 8888:127.0.0.1:8888 youruser@<lxc-ip>
+ssh -L 8888:127.0.0.1:8888 root@<lxc-ip>
 # in that session:
 sudo -u spotify-mcp -H bash -c 'cd /opt/spotify-mcp && npm run auth'
 ```
+
+> Fresh Proxmox LXCs typically only have `root` with SSH key auth, hence `root@` above. Creating a sudo-capable non-root user is a stronger long-term posture — substitute `<your-user>@<lxc-ip>` once you've done so.
 
 Then click the URL printed in the terminal — the redirect goes to your local browser, which forwards through the tunnel back to the LXC's auth server.
 
@@ -142,6 +164,15 @@ curl -i -X POST http://<lxc-ip>:3000/mcp \
 ```
 
 You should see `200 OK` and an SSE-framed JSON response containing `serverInfo` for `spotify-controller`. A `401` means the bearer token didn't match.
+
+### Defense in depth (optional)
+
+The MCP server only ever talks to two outbound hosts:
+
+- `accounts.spotify.com` (auth + token refresh)
+- `api.spotify.com` (everything else)
+
+If you run network segmentation (UniFi, OPNsense, pfSense, etc.), restricting the LXC's outbound egress to those two hosts limits blast radius if the bearer token or refresh token leaks.
 
 ## Authentication & token refresh
 
@@ -212,7 +243,7 @@ Read-only tools (annotated with `readOnlyHint: true`) are safe candidates for `a
 
 Replace `<lxc-ip>` with the IP of the LXC on your LAN and `<your-token>` with the value of `MCP_HTTP_TOKEN` from `.env` on the server.
 
-If your client doesn't yet support the remote MCP `url` field, you can bridge with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote):
+If your client doesn't yet support the remote MCP `url` field, you can bridge with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote). `mcp-remote` rejects plain `http://` URLs by default, so `--allow-http` is required — and **it must precede `--header`**, or it gets parsed as part of the header value. Drop it once you put TLS in front of the LXC via a reverse proxy.
 
 ```json
 {
@@ -223,6 +254,7 @@ If your client doesn't yet support the remote MCP `url` field, you can bridge wi
         "-y",
         "mcp-remote",
         "http://<lxc-ip>:3000/mcp",
+        "--allow-http",
         "--header",
         "Authorization: Bearer <your-token>"
       ]
