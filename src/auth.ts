@@ -1,11 +1,12 @@
 #!/usr/bin/env node
+import 'dotenv/config';
 
 import { authorizeSpotify } from './utils.js';
 
-console.log('Starting Spotify authentication flow...');
+console.error('Starting Spotify authentication flow…');
 authorizeSpotify()
   .then(() => {
-    console.log('Authentication completed successfully!');
+    console.error('Authentication completed successfully!');
     process.exit(0);
   })
   .catch((error) => {

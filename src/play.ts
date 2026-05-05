@@ -1,13 +1,9 @@
 import { z } from 'zod';
-import type { SpotifyHandlerExtra, tool } from './types.js';
+import type { SpotifyHandlerExtra } from './types.js';
+import { defineTool } from './types.js';
 import { handleSpotifyRequest } from './utils.js';
 
-const playMusic: tool<{
-  uri: z.ZodOptional<z.ZodString>;
-  type: z.ZodOptional<z.ZodEnum<['track', 'album', 'artist', 'playlist']>>;
-  id: z.ZodOptional<z.ZodString>;
-  deviceId: z.ZodOptional<z.ZodString>;
-}> = {
+const playMusic = defineTool({
   name: 'playMusic',
   description: 'Start playing a Spotify track, album, artist, or playlist',
   schema: {
@@ -34,9 +30,9 @@ const playMusic: tool<{
           {
             type: 'text',
             text: 'Error: Must provide either a URI or both a type and ID',
-            isError: true,
           },
         ],
+        isError: true,
       };
     }
 
@@ -71,11 +67,9 @@ const playMusic: tool<{
       ],
     };
   },
-};
+});
 
-const pausePlayback: tool<{
-  deviceId: z.ZodOptional<z.ZodString>;
-}> = {
+const pausePlayback = defineTool({
   name: 'pausePlayback',
   description: 'Pause Spotify playback on the active device',
   schema: {
@@ -100,11 +94,9 @@ const pausePlayback: tool<{
       ],
     };
   },
-};
+});
 
-const skipToNext: tool<{
-  deviceId: z.ZodOptional<z.ZodString>;
-}> = {
+const skipToNext = defineTool({
   name: 'skipToNext',
   description: 'Skip to the next track in the current Spotify playback queue',
   schema: {
@@ -129,11 +121,9 @@ const skipToNext: tool<{
       ],
     };
   },
-};
+});
 
-const skipToPrevious: tool<{
-  deviceId: z.ZodOptional<z.ZodString>;
-}> = {
+const skipToPrevious = defineTool({
   name: 'skipToPrevious',
   description:
     'Skip to the previous track in the current Spotify playback queue',
@@ -159,13 +149,9 @@ const skipToPrevious: tool<{
       ],
     };
   },
-};
+});
 
-const createPlaylist: tool<{
-  name: z.ZodString;
-  description: z.ZodOptional<z.ZodString>;
-  public: z.ZodOptional<z.ZodBoolean>;
-}> = {
+const createPlaylist = defineTool({
   name: 'createPlaylist',
   description: 'Create a new playlist on Spotify',
   schema: {
@@ -201,13 +187,9 @@ const createPlaylist: tool<{
       ],
     };
   },
-};
+});
 
-const addTracksToPlaylist: tool<{
-  playlistId: z.ZodString;
-  trackIds: z.ZodArray<z.ZodString>;
-  position: z.ZodOptional<z.ZodNumber>;
-}> = {
+const addTracksToPlaylist = defineTool({
   name: 'addTracksToPlaylist',
   description: 'Add tracks to a Spotify playlist',
   schema: {
@@ -230,6 +212,7 @@ const addTracksToPlaylist: tool<{
             text: 'Error: No track IDs provided',
           },
         ],
+        isError: true,
       };
     }
 
@@ -264,14 +247,13 @@ const addTracksToPlaylist: tool<{
             }`,
           },
         ],
+        isError: true,
       };
     }
   },
-};
+});
 
-const resumePlayback: tool<{
-  deviceId: z.ZodOptional<z.ZodString>;
-}> = {
+const resumePlayback = defineTool({
   name: 'resumePlayback',
   description: 'Resume Spotify playback on the active device',
   schema: {
@@ -296,14 +278,9 @@ const resumePlayback: tool<{
       ],
     };
   },
-};
+});
 
-const addToQueue: tool<{
-  uri: z.ZodOptional<z.ZodString>;
-  type: z.ZodOptional<z.ZodEnum<['track', 'album', 'artist', 'playlist']>>;
-  id: z.ZodOptional<z.ZodString>;
-  deviceId: z.ZodOptional<z.ZodString>;
-}> = {
+const addToQueue = defineTool({
   name: 'addToQueue',
   description: 'Adds a track, album, artist or playlist to the playback queue',
   schema: {
@@ -335,9 +312,9 @@ const addToQueue: tool<{
           {
             type: 'text',
             text: 'Error: Must provide either a URI or both a type and ID',
-            isError: true,
           },
         ],
+        isError: true,
       };
     }
 
@@ -357,12 +334,9 @@ const addToQueue: tool<{
       ],
     };
   },
-};
+});
 
-const setVolume: tool<{
-  volumePercent: z.ZodNumber;
-  deviceId: z.ZodOptional<z.ZodString>;
-}> = {
+const setVolume = defineTool({
   name: 'setVolume',
   description:
     'Set the playback volume to a specific percentage (0-100). Requires Spotify Premium.',
@@ -406,15 +380,13 @@ const setVolume: tool<{
             }`,
           },
         ],
+        isError: true,
       };
     }
   },
-};
+});
 
-const adjustVolume: tool<{
-  adjustment: z.ZodNumber;
-  deviceId: z.ZodOptional<z.ZodString>;
-}> = {
+const adjustVolume = defineTool({
   name: 'adjustVolume',
   description:
     'Adjust the playback volume up or down by a relative amount. Use positive values to increase, negative to decrease. Requires Spotify Premium.',
@@ -491,10 +463,11 @@ const adjustVolume: tool<{
             }`,
           },
         ],
+        isError: true,
       };
     }
   },
-};
+});
 
 export const playTools = [
   playMusic,

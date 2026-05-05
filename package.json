@@ -1,7 +1,7 @@
 {
   "type": "module",
   "name": "spotify-mcp-server",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "main": "index.js",
   "bin": {
     "spotify-mcp": "./build/index.js"
@@ -11,21 +11,26 @@
     "auth": "tsc && node build/auth.js",
     "lint": "biome check --diagnostic-level=warn --error-on-warnings",
     "lint:fix": "biome check --write --unsafe --organize-imports-enabled=true",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run lint && npm run test"
   },
   "files": ["build"],
   "keywords": [],
   "author": "Marcel Marais",
   "description": "A Model Context Protocol server for Spotify integration",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.10.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@spotify/web-api-ts-sdk": "^1.2.0",
-    "open": "^10.1.0",
-    "zod": "^3.24.2"
+    "dotenv": "^17.4.2",
+    "open": "^11.0.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
-    "@types/node": "^22.13.8",
-    "typescript": "^5.8.2"
+    "@types/node": "^22.19.17",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.5"
   }
 }
