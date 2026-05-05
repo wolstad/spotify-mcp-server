@@ -5,6 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { albumTools } from './albums.js';
+import { enrichmentTools } from './enrichment.js';
 import { loadHttpConfig, startHttpServer } from './http.js';
 import { playTools } from './play.js';
 import { playlistTools } from './playlist.js';
@@ -40,6 +41,9 @@ const TITLES: Record<string, string> = {
   updatePlaylist: 'Update Playlist',
   removeTracksFromPlaylist: 'Remove Tracks from Playlist',
   reorderPlaylistItems: 'Reorder Playlist Items',
+  getTrack: 'Get Track Details',
+  getArtist: 'Get Artist Details',
+  enrichPlaylistMetadata: 'Enrich Playlist Metadata',
 };
 
 // Behavior hints for MCP clients. readOnlyHint indicates safe-by-default;
@@ -59,6 +63,9 @@ const ANNOTATIONS: Record<string, ToolAnnotations> = {
   getAlbumTracks: { readOnlyHint: true, openWorldHint: true },
   checkUsersSavedAlbums: { readOnlyHint: true, openWorldHint: true },
   getPlaylist: { readOnlyHint: true, openWorldHint: true },
+  getTrack: { readOnlyHint: true, openWorldHint: true },
+  getArtist: { readOnlyHint: true, openWorldHint: true },
+  enrichPlaylistMetadata: { readOnlyHint: true, openWorldHint: true },
 
   // Destructive tools
   removeUsersSavedTracks: {
@@ -99,7 +106,13 @@ const server = new McpServer({
   version: '1.1.0',
 });
 
-const allTools = [...readTools, ...playTools, ...albumTools, ...playlistTools];
+const allTools = [
+  ...readTools,
+  ...playTools,
+  ...albumTools,
+  ...playlistTools,
+  ...enrichmentTools,
+];
 
 for (const tool of allTools) {
   server.registerTool(

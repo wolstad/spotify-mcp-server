@@ -32,15 +32,33 @@ export function defineTool<Args extends z.ZodRawShape>(
   return t;
 }
 
+export interface SpotifyImage {
+  url: string;
+  width?: number | null;
+  height?: number | null;
+}
+
 export interface SpotifyArtist {
   id: string;
   name: string;
+  // Populated by the dedicated getArtist enrichment endpoint.
+  // The lightweight artist object on a Track or Album does not include these.
+  genres?: string[];
+  popularity?: number;
+  followers?: number;
+  images?: SpotifyImage[];
 }
 
 export interface SpotifyAlbum {
   id: string;
   name: string;
   artists: SpotifyArtist[];
+  album_type?: 'album' | 'single' | 'compilation';
+  label?: string;
+  total_tracks?: number;
+  release_date?: string;
+  release_date_precision?: 'year' | 'month' | 'day';
+  images?: SpotifyImage[];
 }
 
 export interface SpotifyTrack {
@@ -50,4 +68,16 @@ export interface SpotifyTrack {
   duration_ms: number;
   artists: SpotifyArtist[];
   album: SpotifyAlbum;
+  popularity?: number;
+  explicit?: boolean;
+  isrc?: string;
+  release_date?: string;
+  release_date_precision?: 'year' | 'month' | 'day';
+}
+
+// Returned by enrichPlaylistMetadata: a track plus the deduped union of its
+// artists' genres. Genres only live on the artist object in Spotify's API,
+// so this join is what makes genre-based playlist organization possible.
+export interface EnrichedTrack extends SpotifyTrack {
+  artist_genres: string[];
 }

@@ -16,12 +16,13 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that le
 - [Authentication & token refresh](#authentication--token-refresh)
 - [Integrating with Claude Desktop, Cursor, and Cline](#integrating-with-claude-desktop-cursor-and-cline)
 - [Tools](#tools)
+  - [Metadata enrichment (for organizing playlists)](#metadata-enrichment-for-organizing-playlists)
 - [Development](#development)
 </details>
 
 ## What's different in this fork
 
-This fork is based on upstream commit [`969576b`](https://github.com/marcelmarais/spotify-mcp-server/commit/969576b) (the latest as of writing). The tool catalog is identical to upstream — the differences here are infrastructure, not new tools.
+This fork is based on upstream commit [`969576b`](https://github.com/marcelmarais/spotify-mcp-server/commit/969576b) (the latest as of writing). The differences are infrastructure plus three metadata-enrichment tools added on top.
 
 - **HTTP transport with bearer-token auth.** Set `MCP_TRANSPORT=http` to start a long-running HTTP MCP service (`StreamableHTTPServerTransport`), protected by `MCP_HTTP_TOKEN` (constant-time compared on every request). Stdio remains the default. Upstream is stdio-only.
 - **Systemd unit template** in `deploy/spotify-mcp.service` — designed for installing the HTTP service on a small LXC or VM with sensible hardening (`NoNewPrivileges`, `ProtectSystem=strict`, restricted address families).
@@ -30,6 +31,7 @@ This fork is based on upstream commit [`969576b`](https://github.com/marcelmarai
 - **Standardized error returns.** All 27 tools return `{ content: [...], isError: true }` on failure. Upstream sets `isError` in only two places.
 - **Stdio-safe logging.** Runtime status messages (token-refresh notices, etc.) go to `stderr` instead of `stdout`, so they don't corrupt the JSON-RPC frames on the stdio transport. Upstream's `console.log` calls inside the runtime path can break stdio clients.
 - **Modernized dependencies**: `@modelcontextprotocol/sdk` 1.29 (vs upstream 1.10.1), `zod` 4 (vs 3), `dotenv` added, `vitest` smoke tests added, `npm audit` clean.
+- **Metadata enrichment tools** (`getTrack`, `getArtist`, `enrichPlaylistMetadata`) plus expanded fields (popularity, ISRC, release date, explicit, album label/type) on every list-style tool. See [Metadata enrichment (for organizing playlists)](#metadata-enrichment-for-organizing-playlists) for the rationale and constraints.
 
 ## Prerequisites
 
@@ -277,6 +279,22 @@ If your client doesn't yet support the remote MCP `url` field, you can bridge wi
 | `updatePlaylist` | Update name/description/public/collaborative. |
 | `removeTracksFromPlaylist` | Remove tracks from a playlist (max 100 per request). Optional `snapshotId`. |
 | `reorderPlaylistItems` | Move a range of tracks to a new position. Args: `rangeStart`, `insertBefore`, optional `rangeLength`, `snapshotId`. |
+
+### Metadata enrichment (for organizing playlists)
+
+| Tool | Description |
+| --- | --- |
+| `getTrack` | Full details for one track as JSON: popularity, explicit, ISRC, release date, album label/type. |
+| `getArtist` | Full details for one artist as JSON: **genres**, popularity, follower count. The only way to get genre data, since Spotify doesn't put genres on track or album responses. |
+| `enrichPlaylistMetadata` | Headline tool for "organize this playlist." Fetches playlist tracks, looks up every unique artist (bounded concurrency, cap 5), and returns each track joined with `artist_genres` plus popularity, explicit, ISRC, release date, label. Also returns the playlist's deduped genre vocabulary. |
+
+The list-style tools (`searchSpotify`, `getPlaylistTracks`, `getRecentlyPlayed`, `getUsersSavedTracks`, `getQueue`, `getNowPlaying`, `getAlbumTracks`) now also append a compact metadata suffix `[pop 75 · 2024 · E]` to each track line — popularity, release year, and an `E` flag for explicit.
+
+#### What about tempo, key, and energy?
+
+Not supported. Spotify deprecated `audio-features`, `audio-analysis`, `recommendations`, `related-artists`, and 30-second preview URLs in [November 2024](https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api), and [further reduced the API surface in February 2026](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide) (removed batch GETs, removed `browse/*`, removed `artists/{id}/top-tracks`, renamed playlist `/tracks` to `/items`, collapsed library calls to a generic `/me/library`). Apps with grandfathered extended-quota access can still call the deprecated endpoints; new apps and Development Mode apps cannot.
+
+This server organizes playlists using only what's still available: **genres** (joined from artists), **popularity**, **release date**, **explicit** flag, **album type**, and **label**. That covers grouping by genre, sorting by era, separating deep cuts from hits, splitting clean vs. explicit, and indie vs. major-label — but not BPM matching.
 
 ## Development
 

@@ -392,6 +392,30 @@ export function formatDuration(ms: number): string {
   return `${minutes}:${seconds.padStart(2, '0')}`;
 }
 
+// Compact metadata suffix for one-line track listings: popularity, release
+// year, and an "E" flag for explicit. Returns "" when nothing is available
+// so the caller can do `${formatDuration(...)}${formatTrackMeta(track)}`
+// without conditional plumbing.
+export function formatTrackMeta(track: {
+  popularity?: number | null;
+  explicit?: boolean | null;
+  album?: { release_date?: string | null } | null;
+  release_date?: string | null;
+}): string {
+  const parts: string[] = [];
+  if (typeof track.popularity === 'number') {
+    parts.push(`pop ${track.popularity}`);
+  }
+  const releaseDate = track.release_date ?? track.album?.release_date ?? null;
+  if (releaseDate) {
+    // release_date can be year, year-month, or year-month-day; first 4 chars
+    // are always the year.
+    parts.push(releaseDate.slice(0, 4));
+  }
+  if (track.explicit) parts.push('E');
+  return parts.length ? ` [${parts.join(' · ')}]` : '';
+}
+
 export async function handleSpotifyRequest<T>(
   action: (spotifyApi: SpotifyApi) => Promise<T>,
 ): Promise<T> {
