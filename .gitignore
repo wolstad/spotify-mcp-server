@@ -1,8 +1,11 @@
 node_modules
 .vscode
 .env
+.env.local
+.env.*.local
+.spotify-tokens
 package-lock.json
-spotify-config.json
 build
 dist
 .DS_Store
+coverage

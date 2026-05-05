@@ -1,0 +1,34 @@
+[Unit]
+Description=Spotify MCP Server (HTTP transport)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust User/Group to a non-root account that owns /opt/spotify-mcp.
+User=spotify-mcp
+Group=spotify-mcp
+WorkingDirectory=/opt/spotify-mcp
+EnvironmentFile=/opt/spotify-mcp/.env
+ExecStart=/usr/bin/node /opt/spotify-mcp/build/index.js
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+# Allow writing only to the app directory (token cache lives here).
+ReadWritePaths=/opt/spotify-mcp
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

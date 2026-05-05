@@ -1,11 +1,10 @@
 import type { MaxInt } from '@spotify/web-api-ts-sdk';
 import { z } from 'zod';
-import type { SpotifyHandlerExtra, tool } from './types.js';
+import type { SpotifyHandlerExtra } from './types.js';
+import { defineTool } from './types.js';
 import { formatDuration, handleSpotifyRequest } from './utils.js';
 
-const getAlbums: tool<{
-  albumIds: z.ZodUnion<[z.ZodString, z.ZodArray<z.ZodString>]>;
-}> = {
+const getAlbums = defineTool({
   name: 'getAlbums',
   description:
     'Get detailed information about one or more albums by their Spotify IDs',
@@ -26,6 +25,7 @@ const getAlbums: tool<{
             text: 'Error: No album IDs provided',
           },
         ],
+        isError: true,
       };
     }
 
@@ -91,16 +91,13 @@ const getAlbums: tool<{
             }`,
           },
         ],
+        isError: true,
       };
     }
   },
-};
+});
 
-const getAlbumTracks: tool<{
-  albumId: z.ZodString;
-  limit: z.ZodOptional<z.ZodNumber>;
-  offset: z.ZodOptional<z.ZodNumber>;
-}> = {
+const getAlbumTracks = defineTool({
   name: 'getAlbumTracks',
   description: 'Get tracks from a specific album with pagination support',
   schema: {
@@ -169,15 +166,13 @@ const getAlbumTracks: tool<{
             }`,
           },
         ],
+        isError: true,
       };
     }
   },
-};
+});
 
-const saveOrRemoveAlbumForUser: tool<{
-  albumIds: z.ZodArray<z.ZodString>;
-  action: z.ZodEnum<['save', 'remove']>;
-}> = {
+const saveOrRemoveAlbumForUser = defineTool({
   name: 'saveOrRemoveAlbumForUser',
   description: 'Save or remove albums from the user\'s "Your Music" library',
   schema: {
@@ -200,6 +195,7 @@ const saveOrRemoveAlbumForUser: tool<{
             text: 'Error: No album IDs provided',
           },
         ],
+        isError: true,
       };
     }
 
@@ -231,14 +227,13 @@ const saveOrRemoveAlbumForUser: tool<{
             }`,
           },
         ],
+        isError: true,
       };
     }
   },
-};
+});
 
-const checkUsersSavedAlbums: tool<{
-  albumIds: z.ZodArray<z.ZodString>;
-}> = {
+const checkUsersSavedAlbums = defineTool({
   name: 'checkUsersSavedAlbums',
   description: 'Check if albums are saved in the user\'s "Your Music" library',
   schema: {
@@ -258,6 +253,7 @@ const checkUsersSavedAlbums: tool<{
             text: 'Error: No album IDs provided',
           },
         ],
+        isError: true,
       };
     }
 
@@ -291,10 +287,11 @@ const checkUsersSavedAlbums: tool<{
             }`,
           },
         ],
+        isError: true,
       };
     }
   },
-};
+});
 
 export const albumTools = [
   getAlbums,

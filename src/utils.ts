@@ -7,99 +7,152 @@ import { SpotifyApi } from '@spotify/web-api-ts-sdk';
 import open from 'open';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_FILE = path.join(__dirname, '../spotify-config.json');
+const TOKEN_FILE = path.join(__dirname, '../.spotify-tokens');
 
-export interface SpotifyConfig {
+export interface SpotifyCredentials {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
+}
+
+export interface SpotifyTokenCache {
   accessToken?: string;
   refreshToken?: string;
-  expiresAt?: number; // Unix timestamp in milliseconds
+  expiresAt?: number;
 }
 
-export function loadSpotifyConfig(): SpotifyConfig {
-  if (!fs.existsSync(CONFIG_FILE)) {
+export function loadCredentials(): SpotifyCredentials {
+  const clientId = process.env.SPOTIFY_CLIENT_ID;
+  const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+  const redirectUri = process.env.SPOTIFY_REDIRECT_URI;
+
+  if (!(clientId && clientSecret && redirectUri)) {
     throw new Error(
-      `Spotify configuration file not found at ${CONFIG_FILE}. Please create one with clientId, clientSecret, and redirectUri.`,
+      'Missing Spotify credentials. Set SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, and SPOTIFY_REDIRECT_URI in your .env file. See .env.example for guidance.',
     );
   }
 
-  try {
-    const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-    if (!(config.clientId && config.clientSecret && config.redirectUri)) {
-      throw new Error(
-        'Spotify configuration must include clientId, clientSecret, and redirectUri.',
-      );
+  return { clientId, clientSecret, redirectUri };
+}
+
+export function loadTokenCache(): SpotifyTokenCache {
+  if (!fs.existsSync(TOKEN_FILE)) return {};
+
+  const contents = fs.readFileSync(TOKEN_FILE, 'utf8');
+  const parsed = parseEnvFile(contents);
+  const expiresAtRaw = parsed.SPOTIFY_EXPIRES_AT;
+  return {
+    accessToken: parsed.SPOTIFY_ACCESS_TOKEN,
+    refreshToken: parsed.SPOTIFY_REFRESH_TOKEN,
+    expiresAt: expiresAtRaw ? Number(expiresAtRaw) : undefined,
+  };
+}
+
+export function saveTokenCache(tokens: SpotifyTokenCache): void {
+  const lines: string[] = [];
+  if (tokens.accessToken) {
+    lines.push(`SPOTIFY_ACCESS_TOKEN=${tokens.accessToken}`);
+  }
+  if (tokens.refreshToken) {
+    lines.push(`SPOTIFY_REFRESH_TOKEN=${tokens.refreshToken}`);
+  }
+  if (tokens.expiresAt !== undefined) {
+    lines.push(`SPOTIFY_EXPIRES_AT=${tokens.expiresAt}`);
+  }
+  fs.writeFileSync(TOKEN_FILE, `${lines.join('\n')}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+  // Ensure mode is correct even if the file already existed.
+  fs.chmodSync(TOKEN_FILE, 0o600);
+}
+
+export function parseEnvFile(contents: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const rawLine of contents.split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq === -1) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
     }
-    return config;
-  } catch (error) {
-    throw new Error(
-      `Failed to parse Spotify configuration: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+    if (key) result[key] = value;
   }
-}
-
-export function saveSpotifyConfig(config: SpotifyConfig): void {
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8');
+  return result;
 }
 
 let cachedSpotifyApi: SpotifyApi | null = null;
 
 export async function createSpotifyApi(): Promise<SpotifyApi> {
-  const config = loadSpotifyConfig();
+  const credentials = loadCredentials();
+  const tokens = loadTokenCache();
 
-  if (config.accessToken && config.refreshToken) {
+  if (tokens.accessToken && tokens.refreshToken) {
     const now = Date.now();
-    const shouldRefresh = !config.expiresAt || config.expiresAt <= now;
+    const shouldRefresh = !tokens.expiresAt || tokens.expiresAt <= now;
 
     if (shouldRefresh) {
-      console.log(
-        'Access token expired or missing expiration time, refreshing...',
-      );
+      console.error('Access token expired or missing expiration, refreshing…');
       try {
-        const tokens = await refreshAccessToken(config);
-        config.accessToken = tokens.access_token;
-        config.expiresAt = now + tokens.expires_in * 1000; // Convert seconds to milliseconds
-        saveSpotifyConfig(config);
-        console.log('Access token refreshed successfully');
-
-        // Clear cached API instance to force recreation with new token
+        const refreshed = await refreshAccessToken(
+          credentials,
+          tokens.refreshToken,
+        );
+        tokens.accessToken = refreshed.access_token;
+        tokens.expiresAt = now + refreshed.expires_in * 1000;
+        if (refreshed.refresh_token) {
+          tokens.refreshToken = refreshed.refresh_token;
+        }
+        saveTokenCache(tokens);
+        console.error('Access token refreshed successfully');
         cachedSpotifyApi = null;
       } catch (error) {
         console.error('Failed to refresh token:', error);
         throw new Error(
-          'Failed to refresh access token. Please run "npm run auth" to re-authenticate.',
+          'Failed to refresh access token. Run `npm run auth` to re-authenticate.',
         );
       }
     }
 
-    if (cachedSpotifyApi) {
-      return cachedSpotifyApi;
-    }
+    if (cachedSpotifyApi) return cachedSpotifyApi;
 
     const accessToken = {
-      access_token: config.accessToken,
+      access_token: tokens.accessToken,
       token_type: 'Bearer',
       expires_in: Math.floor(
-        ((config.expiresAt ?? now + 3600000) - now) / 1000,
+        ((tokens.expiresAt ?? now + 3600000) - now) / 1000,
       ),
-      refresh_token: config.refreshToken,
+      refresh_token: tokens.refreshToken,
     };
 
-    cachedSpotifyApi = SpotifyApi.withAccessToken(config.clientId, accessToken);
+    cachedSpotifyApi = SpotifyApi.withAccessToken(
+      credentials.clientId,
+      accessToken,
+    );
     return cachedSpotifyApi;
   }
 
-  // Fallback to client credentials if no user tokens available
+  // Fallback: no user tokens — client-credentials flow (read-only, no user scopes).
   cachedSpotifyApi = SpotifyApi.withClientCredentials(
-    config.clientId,
-    config.clientSecret,
+    credentials.clientId,
+    credentials.clientSecret,
   );
-
   return cachedSpotifyApi;
+}
+
+export async function getCurrentAccessToken(): Promise<string> {
+  await createSpotifyApi();
+  const tokens = loadTokenCache();
+  if (!tokens.accessToken) {
+    throw new Error('No access token available. Run `npm run auth` first.');
+  }
+  return tokens.accessToken;
 }
 
 function generateRandomString(length: number): string {
@@ -120,19 +173,19 @@ function base64Encode(str: string): string {
 
 async function exchangeCodeForToken(
   code: string,
-  config: SpotifyConfig,
+  credentials: SpotifyCredentials,
 ): Promise<{
   access_token: string;
   refresh_token: string;
   expires_in: number;
 }> {
   const tokenUrl = 'https://accounts.spotify.com/api/token';
-  const authHeader = `Basic ${base64Encode(`${config.clientId}:${config.clientSecret}`)}`;
+  const authHeader = `Basic ${base64Encode(`${credentials.clientId}:${credentials.clientSecret}`)}`;
 
   const params = new URLSearchParams();
   params.append('grant_type', 'authorization_code');
   params.append('code', code);
-  params.append('redirect_uri', config.redirectUri);
+  params.append('redirect_uri', credentials.redirectUri);
 
   const response = await fetch(tokenUrl, {
     method: 'POST',
@@ -157,18 +210,19 @@ async function exchangeCodeForToken(
 }
 
 async function refreshAccessToken(
-  config: SpotifyConfig,
-): Promise<{ access_token: string; expires_in: number }> {
-  if (!config.refreshToken) {
-    throw new Error('No refresh token available');
-  }
-
+  credentials: SpotifyCredentials,
+  refreshToken: string,
+): Promise<{
+  access_token: string;
+  refresh_token?: string;
+  expires_in: number;
+}> {
   const tokenUrl = 'https://accounts.spotify.com/api/token';
-  const authHeader = `Basic ${base64Encode(`${config.clientId}:${config.clientSecret}`)}`;
+  const authHeader = `Basic ${base64Encode(`${credentials.clientId}:${credentials.clientSecret}`)}`;
 
   const params = new URLSearchParams();
   params.append('grant_type', 'refresh_token');
-  params.append('refresh_token', config.refreshToken);
+  params.append('refresh_token', refreshToken);
 
   const response = await fetch(tokenUrl, {
     method: 'POST',
@@ -187,23 +241,21 @@ async function refreshAccessToken(
   const data = await response.json();
   return {
     access_token: data.access_token,
+    refresh_token: data.refresh_token,
     expires_in: data.expires_in || 3600,
   };
 }
 
 export async function authorizeSpotify(): Promise<void> {
-  const config = loadSpotifyConfig();
+  const credentials = loadCredentials();
 
-  const redirectUri = new URL(config.redirectUri);
+  const redirectUri = new URL(credentials.redirectUri);
   if (
     redirectUri.hostname !== 'localhost' &&
     redirectUri.hostname !== '127.0.0.1'
   ) {
     console.error(
-      'Error: Redirect URI must use localhost for automatic token exchange',
-    );
-    console.error(
-      'Please update your spotify-config.json with a localhost redirect URI',
+      'Error: SPOTIFY_REDIRECT_URI must use localhost or 127.0.0.1 for automatic token exchange',
     );
     console.error('Example: http://127.0.0.1:8888/callback');
     process.exit(1);
@@ -226,28 +278,22 @@ export async function authorizeSpotify(): Promise<void> {
     'user-library-read',
     'user-library-modify',
     'user-read-recently-played',
-    'user-modify-playback-state',
-    'user-read-playback-state',
-    'user-read-currently-playing',
   ];
 
   const authParams = new URLSearchParams({
-    client_id: config.clientId,
+    client_id: credentials.clientId,
     response_type: 'code',
-    redirect_uri: config.redirectUri,
+    redirect_uri: credentials.redirectUri,
     scope: scopes.join(' '),
-    state: state,
+    state,
     show_dialog: 'true',
   });
 
   const authorizationUrl = `https://accounts.spotify.com/authorize?${authParams.toString()}`;
 
-  const authPromise = new Promise<void>((resolve, reject) => {
-    // Create HTTP server to handle the callback
+  await new Promise<void>((resolve, reject) => {
     const server = http.createServer(async (req, res) => {
-      if (!req.url) {
-        return res.end('No URL provided');
-      }
+      if (!req.url) return res.end('No URL provided');
 
       const reqUrl = new URL(req.url, `http://localhost:${port}`);
 
@@ -289,29 +335,29 @@ export async function authorizeSpotify(): Promise<void> {
         }
 
         try {
-          const tokens = await exchangeCodeForToken(code, config);
-
-          config.accessToken = tokens.access_token;
-          config.refreshToken = tokens.refresh_token;
-          config.expiresAt = Date.now() + tokens.expires_in * 1000; // Convert seconds to milliseconds
-          saveSpotifyConfig(config);
+          const tokens = await exchangeCodeForToken(code, credentials);
+          saveTokenCache({
+            accessToken: tokens.access_token,
+            refreshToken: tokens.refresh_token,
+            expiresAt: Date.now() + tokens.expires_in * 1000,
+          });
 
           res.end(
             '<html><body><h1>Authentication Successful!</h1><p>You can now close this window and return to the application.</p></body></html>',
           );
-          console.log(
-            'Authentication successful! Access token has been saved.',
+          console.error(
+            'Authentication successful! Tokens saved to .spotify-tokens (mode 0600).',
           );
 
           server.close();
           resolve();
-        } catch (error) {
-          console.error('Token exchange error:', error);
+        } catch (err) {
+          console.error('Token exchange error:', err);
           res.end(
             '<html><body><h1>Authentication Failed</h1><p>Failed to exchange authorization code for tokens. Please close this window and try again.</p></body></html>',
           );
           server.close();
-          reject(error);
+          reject(err);
         }
       } else {
         res.writeHead(404);
@@ -320,16 +366,16 @@ export async function authorizeSpotify(): Promise<void> {
     });
 
     server.listen(Number.parseInt(port), '127.0.0.1', () => {
-      console.log(
+      console.error(
         `Listening for Spotify authentication callback on port ${port}`,
       );
-      console.log('Opening browser for authorization...');
+      console.error('Opening browser for authorization…');
 
       open(authorizationUrl).catch((_error: Error) => {
-        console.log(
+        console.error(
           'Failed to open browser automatically. Please visit this URL to authorize:',
         );
-        console.log(authorizationUrl);
+        console.error(authorizationUrl);
       });
     });
 
@@ -338,8 +384,6 @@ export async function authorizeSpotify(): Promise<void> {
       reject(error);
     });
   });
-
-  await authPromise;
 }
 
 export function formatDuration(ms: number): string {
@@ -355,16 +399,16 @@ export async function handleSpotifyRequest<T>(
     const spotifyApi = await createSpotifyApi();
     return await action(spotifyApi);
   } catch (error) {
-    // Skip JSON parsing errors as these are actually successful operations
     const errorMessage = error instanceof Error ? error.message : String(error);
     if (
       errorMessage.includes('Unexpected token') ||
       errorMessage.includes('Unexpected non-whitespace character') ||
       errorMessage.includes('Exponent part is missing a number in JSON')
     ) {
+      // Spotify often returns empty 200/204 for write endpoints; the SDK then
+      // fails JSON parsing. Treat these as success.
       return undefined as T;
     }
-    // Rethrow other errors
     throw error;
   }
 }

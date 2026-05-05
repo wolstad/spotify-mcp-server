@@ -1,11 +1,11 @@
 import type { MaxInt } from '@spotify/web-api-ts-sdk';
 import { z } from 'zod';
-import type { SpotifyHandlerExtra, SpotifyTrack, tool } from './types.js';
+import type { SpotifyHandlerExtra, SpotifyTrack } from './types.js';
+import { defineTool } from './types.js';
 import {
-  createSpotifyApi,
   formatDuration,
+  getCurrentAccessToken,
   handleSpotifyRequest,
-  loadSpotifyConfig,
 } from './utils.js';
 
 function isTrack(item: any): item is SpotifyTrack {
@@ -18,11 +18,7 @@ function isTrack(item: any): item is SpotifyTrack {
   );
 }
 
-const searchSpotify: tool<{
-  query: z.ZodString;
-  type: z.ZodEnum<['track', 'album', 'artist', 'playlist']>;
-  limit: z.ZodOptional<z.ZodNumber>;
-}> = {
+const searchSpotify = defineTool({
   name: 'searchSpotify',
   description: 'Search for tracks, albums, artists, or playlists on Spotify',
   schema: {
@@ -111,12 +107,13 @@ const searchSpotify: tool<{
             }`,
           },
         ],
+        isError: true,
       };
     }
   },
-};
+});
 
-const getNowPlaying: tool<Record<string, never>> = {
+const getNowPlaying = defineTool({
   name: 'getNowPlaying',
   description:
     'Get information about the currently playing track on Spotify, including device and volume info',
@@ -195,14 +192,13 @@ const getNowPlaying: tool<Record<string, never>> = {
             }`,
           },
         ],
+        isError: true,
       };
     }
   },
-};
+});
 
-const getMyPlaylists: tool<{
-  limit: z.ZodOptional<z.ZodNumber>;
-}> = {
+const getMyPlaylists = defineTool({
   name: 'getMyPlaylists',
   description: "Get a list of the current user's playlists on Spotify",
   schema: {
@@ -251,13 +247,9 @@ const getMyPlaylists: tool<{
       ],
     };
   },
-};
+});
 
-const getPlaylistTracks: tool<{
-  playlistId: z.ZodString;
-  limit: z.ZodOptional<z.ZodNumber>;
-  offset: z.ZodOptional<z.ZodNumber>;
-}> = {
+const getPlaylistTracks = defineTool({
   name: 'getPlaylistTracks',
   description: 'Get a list of tracks in a Spotify playlist',
   schema: {
@@ -322,11 +314,9 @@ const getPlaylistTracks: tool<{
       ],
     };
   },
-};
+});
 
-const getRecentlyPlayed: tool<{
-  limit: z.ZodOptional<z.ZodNumber>;
-}> = {
+const getRecentlyPlayed = defineTool({
   name: 'getRecentlyPlayed',
   description: 'Get a list of recently played tracks on Spotify',
   schema: {
@@ -384,12 +374,9 @@ const getRecentlyPlayed: tool<{
       ],
     };
   },
-};
+});
 
-const getUsersSavedTracks: tool<{
-  limit: z.ZodOptional<z.ZodNumber>;
-  offset: z.ZodOptional<z.ZodNumber>;
-}> = {
+const getUsersSavedTracks = defineTool({
   name: 'getUsersSavedTracks',
   description:
     'Get a list of tracks saved in the user\'s "Liked Songs" library',
@@ -452,11 +439,9 @@ const getUsersSavedTracks: tool<{
       ],
     };
   },
-};
+});
 
-const getQueue: tool<{
-  limit: z.ZodOptional<z.ZodNumber>;
-}> = {
+const getQueue = defineTool({
   name: 'getQueue',
   description:
     'Get a list of the currently playing track and the next items in your Spotify queue',
@@ -543,12 +528,13 @@ const getQueue: tool<{
             }`,
           },
         ],
+        isError: true,
       };
     }
   },
-};
+});
 
-const getAvailableDevices: tool<Record<string, never>> = {
+const getAvailableDevices = defineTool({
   name: 'getAvailableDevices',
   description:
     "Get information about the user's available Spotify Connect devices",
@@ -600,14 +586,13 @@ const getAvailableDevices: tool<Record<string, never>> = {
             }`,
           },
         ],
+        isError: true,
       };
     }
   },
-};
+});
 
-const removeUsersSavedTracks: tool<{
-  trackIds: z.ZodArray<z.ZodString>;
-}> = {
+const removeUsersSavedTracks = defineTool({
   name: 'removeUsersSavedTracks',
   description:
     'Remove one or more tracks from the user\'s "Liked Songs" library (max 40 per request)',
@@ -623,13 +608,12 @@ const removeUsersSavedTracks: tool<{
     if (trackIds.length === 0) {
       return {
         content: [{ type: 'text', text: 'Error: No track IDs provided' }],
+        isError: true,
       };
     }
 
     try {
-      // Ensure token is fresh (handles auto-refresh if needed)
-      await createSpotifyApi();
-      const config = loadSpotifyConfig();
+      const accessToken = await getCurrentAccessToken();
 
       const uris = trackIds.map((id) => `spotify:track:${id}`).join(',');
       const response = await fetch(
@@ -637,7 +621,7 @@ const removeUsersSavedTracks: tool<{
         {
           method: 'DELETE',
           headers: {
-            Authorization: `Bearer ${config.accessToken}`,
+            Authorization: `Bearer ${accessToken}`,
           },
         },
       );
@@ -665,10 +649,11 @@ const removeUsersSavedTracks: tool<{
             }`,
           },
         ],
+        isError: true,
       };
     }
   },
-};
+});
 
 export const readTools = [
   searchSpotify,
