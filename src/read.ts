@@ -7,6 +7,7 @@ import type {
 } from './types.js';
 import { defineTool } from './types.js';
 import {
+  extractTrackFromPlaylistItem,
   formatDuration,
   formatTrackMeta,
   getCurrentAccessToken,
@@ -314,18 +315,26 @@ const getPlaylistTracks = defineTool({
     }
 
     const formattedTracks = playlistTracks.items
-      .map((item, i) => {
-        const { track } = item;
-        if (!track) return `${offset + i + 1}. [Removed track]`;
-
-        if (isTrack(track)) {
-          const artists = track.artists.map((a) => a.name).join(', ');
-          const duration = formatDuration(track.duration_ms);
-          const meta = formatTrackMeta(track);
-          return `${offset + i + 1}. "${track.name}" by ${artists} (${duration})${meta} - ID: ${track.id}`;
+      .map((entry, i) => {
+        const track = extractTrackFromPlaylistItem(entry);
+        if (!track) {
+          const raw = entry as {
+            track?: unknown;
+            item?: { episode?: boolean; type?: string };
+          };
+          const isEpisode =
+            raw.track === false ||
+            raw.item?.episode === true ||
+            raw.item?.type === 'episode';
+          if (isEpisode) {
+            return `${offset + i + 1}. [Podcast episode — not displayed]`;
+          }
+          return `${offset + i + 1}. [Track unavailable]`;
         }
-
-        return `${offset + i + 1}. Unknown item`;
+        const artists = track.artists.map((a) => a.name).join(', ');
+        const duration = formatDuration(track.duration_ms);
+        const meta = formatTrackMeta(track);
+        return `${offset + i + 1}. "${track.name}" by ${artists} (${duration})${meta} - ID: ${track.id}`;
       })
       .join('\n');
 
