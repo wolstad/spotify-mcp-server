@@ -81,3 +81,18 @@ export interface SpotifyTrack {
 export interface EnrichedTrack extends SpotifyTrack {
   artist_genres: string[];
 }
+
+// Shape returned by GET /v1/playlists/{id}/items (the post-Feb-2026 path
+// the SDK still calls /tracks). Only the fields we actually consume are
+// declared; `track` is left as `unknown` because callers narrow it with
+// the local `isTrack` guard before reading any fields.
+export interface PlaylistItemsResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  next: string | null;
+  items: Array<{
+    track: unknown;
+    added_at?: string;
+  }>;
+}

@@ -20,7 +20,13 @@ const getPlaylist = defineTool({
 
       const owner =
         playlist.owner?.display_name ?? playlist.owner?.id ?? 'Unknown';
-      const tracksTotal = playlist.tracks?.total ?? 0;
+      // Spotify's Feb 2026 migration stopped populating `tracks.total` for
+      // some app tiers; render `?` instead of a misleading `0` when missing.
+      const tracksTotal = playlist.tracks?.total;
+      const tracksLabel =
+        typeof tracksTotal === 'number' && tracksTotal > 0
+          ? String(tracksTotal)
+          : '?';
       const isPublic = playlist.public ? 'Public' : 'Private';
       const isCollaborative = playlist.collaborative ? ' | Collaborative' : '';
       const description = playlist.description
@@ -34,7 +40,7 @@ const getPlaylist = defineTool({
         content: [
           {
             type: 'text',
-            text: `# Playlist: "${playlist.name}"\n\n**Owner**: ${owner}\n**Tracks**: ${tracksTotal}\n${
+            text: `# Playlist: "${playlist.name}"\n\n**Owner**: ${owner}\n**Tracks**: ${tracksLabel}\n${
               typeof followers === 'number'
                 ? `**Followers**: ${followers}\n`
                 : ''

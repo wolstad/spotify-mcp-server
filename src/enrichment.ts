@@ -1,13 +1,14 @@
-import type { MaxInt, Track } from '@spotify/web-api-ts-sdk';
+import type { Track } from '@spotify/web-api-ts-sdk';
 import { z } from 'zod';
 import type {
   EnrichedTrack,
+  PlaylistItemsResponse,
   SpotifyArtist,
   SpotifyHandlerExtra,
   SpotifyTrack,
 } from './types.js';
 import { defineTool } from './types.js';
-import { handleSpotifyRequest } from './utils.js';
+import { handleSpotifyRequest, spotifyFetch } from './utils.js';
 
 // Spotify removed batch GET /artists in February 2026, so we have to fan out
 // per-artist requests. Cap concurrency to avoid hitting the rate limit when a
@@ -224,14 +225,10 @@ const enrichPlaylistMetadata = defineTool({
     const { playlistId, limit = 50, offset = 0 } = args;
 
     try {
-      const playlistItems = await handleSpotifyRequest((api) =>
-        api.playlists.getPlaylistItems(
-          playlistId,
-          undefined,
-          undefined,
-          limit as MaxInt<50>,
-          offset,
-        ),
+      // Bypass the SDK: it still calls the legacy /playlists/{id}/tracks path
+      // which returns 403 after the Feb 2026 migration. Hit /items directly.
+      const playlistItems = await spotifyFetch<PlaylistItemsResponse>(
+        `/playlists/${encodeURIComponent(playlistId)}/items?limit=${limit}&offset=${offset}`,
       );
 
       const tracks: Track[] = [];
