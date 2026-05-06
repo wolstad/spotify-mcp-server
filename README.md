@@ -64,47 +64,35 @@ When the MCP client and server are on different machines, run the server in HTTP
 
 ### 1. Provision the LXC
 
-A 1 vCPU / 512 MB / 2 GB-disk Debian or Ubuntu LXC is plenty.
+A 1 vCPU / 512 MB / 2 GB-disk Debian 13 or Ubuntu 24.04 LXC is plenty. You'll need root SSH access.
 
-Inside the container:
+### 2. Run the installer
+
+Inside the container, as root:
 
 ```bash
-apt update && apt upgrade -y
-curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-apt install -y nodejs git curl
-node --version  # should print v22.x
-
-adduser --system --group --home /opt/spotify-mcp spotify-mcp
+bash <(curl -fsSL https://raw.githubusercontent.com/wolstad/spotify-mcp-server/main/install.sh)
 ```
 
-> Debian/Ubuntu apt repos lag behind Node LTS — Debian 13 ships Node 20, but this server requires Node 22+. The NodeSource repo above bundles `npm`, so it's no longer a separate package.
+The installer is idempotent — re-running it pulls the latest code, rebuilds, and leaves your `.env` / `.spotify-tokens` untouched. On first run after upgrade it migrates state from `/opt/spotify-mcp/` to `/etc/spotify-mcp/` automatically. It:
 
-### 2. Install the app
+- installs Node 22 (via NodeSource), `git`, `openssl`
+- creates the `spotify-mcp` system user
+- clones the repo to `/opt/spotify-mcp/` (code) and creates `/etc/spotify-mcp/` (state, mode 750)
+- builds the TypeScript
+- generates `MCP_HTTP_TOKEN` on fresh installs and prints it once
+- installs the systemd unit, `enable`s it, and **leaves it stopped** on fresh installs (OAuth still needs to run)
 
-```bash
-sudo -u spotify-mcp -H bash <<'EOF'
-cd /opt/spotify-mcp
-git clone https://github.com/wolstad/spotify-mcp-server.git .
-npm ci
-npm run build
-EOF
-```
+> **Security note.** `curl | bash` runs whatever is at that URL with root privileges. Pin to a release tag if you want a stable reference, e.g. `…/v1.1.0/install.sh` instead of `…/main/install.sh`.
 
-### 3. Configure
+Flags: `--branch <name>`, `--non-interactive`, `--help`.
 
-First generate a bearer token — copy the output, you'll paste it into `.env` below:
+### 3. Configure credentials
 
-```bash
-openssl rand -hex 32
-```
-
-Copy the example env file and open it for editing. The `--system` `spotify-mcp` user has no login shell, so the most reliable pattern is to write through `bash`:
+Edit `/etc/spotify-mcp/.env` and fill in your Spotify Developer credentials:
 
 ```bash
-sudo -u spotify-mcp cp /opt/spotify-mcp/.env.example /opt/spotify-mcp/.env
-sudo -u spotify-mcp -H bash -c 'nano /opt/spotify-mcp/.env'
-# or, if you prefer vim:
-# sudo EDITOR=vim -u spotify-mcp -e /opt/spotify-mcp/.env
+nano /etc/spotify-mcp/.env
 ```
 
 Set at minimum:
@@ -117,10 +105,8 @@ SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888/callback
 MCP_TRANSPORT=http
 MCP_HTTP_HOST=0.0.0.0
 MCP_HTTP_PORT=3000
-MCP_HTTP_TOKEN=<paste-generated-hex-here>
+# MCP_HTTP_TOKEN was generated and written by the installer.
 ```
-
-> `.env` is read literally — `$(openssl rand -hex 32)` will **not** be expanded. Paste the actual hex string from the command above.
 
 > The bearer token is the **only** thing standing between the public LAN and full control of your Spotify account. Keep it long and keep it secret.
 
@@ -128,7 +114,7 @@ MCP_HTTP_TOKEN=<paste-generated-hex-here>
 
 OAuth needs a browser, which an LXC doesn't have. Two options:
 
-**Option A — auth on a workstation, copy tokens.** Run `npm run auth` on any machine with a browser, then `scp .spotify-tokens` to `/opt/spotify-mcp/.spotify-tokens`. Make sure file mode is `0600` and owner is `spotify-mcp`.
+**Option A — auth on a workstation, copy tokens.** Run `npm run auth` on any machine with a browser, then `scp .spotify-tokens` to `/etc/spotify-mcp/.spotify-tokens`. Set file mode `0600` and owner `spotify-mcp`.
 
 **Option B — SSH-tunnel port 8888.** From your workstation:
 
@@ -138,18 +124,20 @@ ssh -L 8888:127.0.0.1:8888 root@<lxc-ip>
 sudo -u spotify-mcp -H bash -c 'cd /opt/spotify-mcp && npm run auth'
 ```
 
+Tokens land at `/etc/spotify-mcp/.spotify-tokens` (since `/etc/spotify-mcp/` exists, the code resolves state there automatically; no env override needed).
+
 > Fresh Proxmox LXCs typically only have `root` with SSH key auth, hence `root@` above. Creating a sudo-capable non-root user is a stronger long-term posture — substitute `<your-user>@<lxc-ip>` once you've done so.
 
 Then click the URL printed in the terminal — the redirect goes to your local browser, which forwards through the tunnel back to the LXC's auth server.
 
-### 5. Install the systemd unit
+### 5. Start the service
 
 ```bash
-sudo cp /opt/spotify-mcp/deploy/spotify-mcp.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now spotify-mcp
+sudo systemctl start spotify-mcp
 sudo systemctl status spotify-mcp
 ```
+
+(The installer already enabled it for boot.)
 
 ### 6. Verify
 
@@ -164,6 +152,14 @@ curl -i -X POST http://<lxc-ip>:3000/mcp \
 ```
 
 You should see `200 OK` and an SSE-framed JSON response containing `serverInfo` for `spotify-controller`. A `401` means the bearer token didn't match.
+
+### Updating
+
+Re-run the installer. It detects the existing checkout, fetches and rebuilds, preserves `.env` / `.spotify-tokens`, and only restarts the service if it was already running.
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/wolstad/spotify-mcp-server/main/install.sh)
+```
 
 ### Defense in depth (optional)
 
@@ -190,6 +186,8 @@ Spotify uses OAuth 2.0. The flow:
 3. The MCP server transparently refreshes the access token when it's about to expire, updating `.spotify-tokens` in place.
 
 If a refresh ever fails (refresh token revoked, password changed, etc.), the server reports the error and you should rerun `npm run auth`.
+
+> **Where state lives.** On production LXC installs, both files live at `/etc/spotify-mcp/.env` and `/etc/spotify-mcp/.spotify-tokens`. For local development, they fall back to the project directory with a one-time stderr deprecation warning. Set `SPOTIFY_MCP_STATE_DIR` to override the location explicitly.
 
 > **Why two files?** `.env` is hand-edited by you and tracks credentials; `.spotify-tokens` is machine-managed and tracks short-lived tokens. Splitting them keeps your `.env` comments and ordering intact when tokens rotate.
 
@@ -241,7 +239,7 @@ Read-only tools (annotated with `readOnlyHint: true`) are safe candidates for `a
 }
 ```
 
-Replace `<lxc-ip>` with the IP of the LXC on your LAN and `<your-token>` with the value of `MCP_HTTP_TOKEN` from `.env` on the server.
+Replace `<lxc-ip>` with the IP of the LXC on your LAN and `<your-token>` with the value of `MCP_HTTP_TOKEN` from `/etc/spotify-mcp/.env` on the server.
 
 If your client doesn't yet support the remote MCP `url` field, you can bridge with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote). `mcp-remote` rejects plain `http://` URLs by default, so `--allow-http` is required — and **it must precede `--header`**, or it gets parsed as part of the header value. Drop it once you put TLS in front of the LXC via a reverse proxy.
 
@@ -344,16 +342,18 @@ Tests live in `src/*.test.ts`. The compile step (`tsc`) excludes `*.test.ts` fro
 ### Project layout
 
 ```
+install.sh        # LXC installer / updater (idempotent)
 src/
   index.ts        # entry point; selects transport (stdio | http) and registers tools
-  http.ts         # HTTP transport with bearer-token auth
+  bootstrap.ts    # side-effect dotenv loader for the entry points
+  http.ts         # HTTP transport with bearer-token auth and per-session McpServer
   auth.ts         # `npm run auth` — one-shot OAuth flow
-  utils.ts        # credential/token helpers, refresh logic
+  utils.ts        # credential/token helpers, state-dir resolution, refresh logic
   types.ts        # shared types and the `defineTool()` helper
   read.ts         # read-only tools
   play.ts         # playback + create tools
   albums.ts       # album tools
   playlist.ts     # playlist management tools
 deploy/
-  spotify-mcp.service  # systemd unit template
+  spotify-mcp.service  # systemd unit template (EnvironmentFile=/etc/spotify-mcp/.env)
 ```
