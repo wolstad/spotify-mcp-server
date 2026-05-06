@@ -219,9 +219,42 @@ const getNowPlaying = defineTool({
   },
 });
 
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : `${s.slice(0, max - 1).trimEnd()}…`;
+}
+
+type SimplifiedPlaylistLike = {
+  name: string;
+  id: string;
+  description?: string | null;
+  public?: boolean | null;
+  collaborative?: boolean;
+  owner?: { id?: string; display_name?: string | null } | null;
+};
+
+export function formatMyPlaylists(
+  page: { items: SimplifiedPlaylistLike[]; total: number },
+  myUserId: string,
+): string {
+  const lines = page.items.map((p, i) => {
+    const ownerSegment =
+      p.owner?.id && p.owner.id !== myUserId
+        ? ` by ${p.owner.display_name?.trim() || p.owner.id}`
+        : '';
+    const bits = [p.public ? 'public' : 'private'];
+    if (p.collaborative) bits.push('collaborative');
+    const visibility = `(${bits.join(', ')})`;
+    const desc = p.description?.trim();
+    const description = desc ? ` — ${truncate(desc, 80)}` : '';
+    return `${i + 1}. "${p.name}"${ownerSegment} ${visibility}${description} - ID: ${p.id}`;
+  });
+  return `# Your Spotify Playlists (${page.total} total)\n\n${lines.join('\n')}`;
+}
+
 const getMyPlaylists = defineTool({
   name: 'getMyPlaylists',
-  description: "Get a list of the current user's playlists on Spotify",
+  description:
+    'Lists the authenticated user\'s playlists with owner, visibility, and description. Use this for any "what playlists do I have" question — do not call getPlaylist per item to get more detail; the same metadata is already returned here. Per-playlist track counts are not included (Spotify Feb 2026 API change removed tracks.total from this response); call getPlaylistTracks for a specific playlist if a count is needed.',
   schema: {
     limit: z
       .number()
@@ -233,10 +266,12 @@ const getMyPlaylists = defineTool({
   handler: async (args, _extra: SpotifyHandlerExtra) => {
     const { limit = 50 } = args;
 
-    const playlists = await handleSpotifyRequest(async (spotifyApi) => {
-      return await spotifyApi.currentUser.playlists.playlists(
-        limit as MaxInt<50>,
-      );
+    const { me, playlists } = await handleSpotifyRequest(async (spotifyApi) => {
+      const [meResp, playlistsResp] = await Promise.all([
+        spotifyApi.currentUser.profile(),
+        spotifyApi.currentUser.playlists.playlists(limit as MaxInt<50>),
+      ]);
+      return { me: meResp, playlists: playlistsResp };
     });
 
     if (playlists.items.length === 0) {
@@ -250,27 +285,11 @@ const getMyPlaylists = defineTool({
       };
     }
 
-    const formattedPlaylists = playlists.items
-      .map((playlist, i) => {
-        // Spotify's Feb 2026 migration stopped populating `tracks.total` on
-        // simplified-playlist objects for some app tiers; render `?` instead
-        // of a misleading `0` when it's missing.
-        const tracksTotal = playlist.tracks?.total;
-        const countLabel =
-          typeof tracksTotal === 'number' && tracksTotal > 0
-            ? `${tracksTotal} tracks`
-            : '? tracks';
-        return `${i + 1}. "${playlist.name}" (${countLabel}) - ID: ${
-          playlist.id
-        }`;
-      })
-      .join('\n');
-
     return {
       content: [
         {
           type: 'text',
-          text: `# Your Spotify Playlists\n\n${formattedPlaylists}`,
+          text: formatMyPlaylists(playlists, me.id),
         },
       ],
     };
