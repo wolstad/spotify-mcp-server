@@ -24,6 +24,7 @@ import {
   parseEnvFile,
   resolveStateDir,
   saveTokenCache,
+  spotifyFetch,
 } from './utils.js';
 
 describe('formatDuration', () => {
@@ -281,5 +282,105 @@ describe('authorizeSpotify', () => {
     expect(urlMessage).toContain('client_id=test-client-id');
     expect(urlMessage).toContain('state=');
     expect(urlMessage).toContain('redirect_uri=');
+  });
+});
+
+describe('spotifyFetch', () => {
+  let tmpDir: string;
+  let originalEnv: Record<string, string | undefined>;
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spotify-mcp-fetch-'));
+    originalEnv = {
+      SPOTIFY_MCP_STATE_DIR: process.env.SPOTIFY_MCP_STATE_DIR,
+      SPOTIFY_CLIENT_ID: process.env.SPOTIFY_CLIENT_ID,
+      SPOTIFY_CLIENT_SECRET: process.env.SPOTIFY_CLIENT_SECRET,
+      SPOTIFY_REDIRECT_URI: process.env.SPOTIFY_REDIRECT_URI,
+    };
+    process.env.SPOTIFY_MCP_STATE_DIR = tmpDir;
+    process.env.SPOTIFY_CLIENT_ID = 'test-client-id';
+    process.env.SPOTIFY_CLIENT_SECRET = 'test-client-secret';
+    process.env.SPOTIFY_REDIRECT_URI = 'http://127.0.0.1:8888/callback';
+
+    // Token that expires far in the future so getCurrentAccessToken returns
+    // immediately without triggering a refresh round-trip.
+    saveTokenCache({
+      accessToken: 'test-access-token',
+      refreshToken: 'test-refresh-token',
+      expiresAt: Date.now() + 60 * 60 * 1000,
+    });
+
+    fetchSpy = vi.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    for (const [k, v] of Object.entries(originalEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it('sends Authorization and Accept headers and resolves to JSON body on 200', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ items: [], total: 0 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const result = await spotifyFetch<{ items: unknown[]; total: number }>(
+      '/playlists/abc/items?limit=50&offset=0',
+    );
+
+    expect(result).toEqual({ items: [], total: 0 });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [calledUrl, calledInit] = fetchSpy.mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(calledUrl).toBe(
+      'https://api.spotify.com/v1/playlists/abc/items?limit=50&offset=0',
+    );
+    const headers = calledInit.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer test-access-token');
+    expect(headers.Accept).toBe('application/json');
+  });
+
+  it('returns undefined for 204 No Content responses', async () => {
+    fetchSpy.mockResolvedValue(new Response(null, { status: 204 }));
+
+    const result = await spotifyFetch('/me/player/play');
+
+    expect(result).toBeUndefined();
+  });
+
+  it('throws an Error including status, status text, path, and body on non-2xx', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response('{"error": {"status": 403, "message": "Forbidden"}}', {
+        status: 403,
+        statusText: 'Forbidden',
+      }),
+    );
+
+    await expect(spotifyFetch('/playlists/abc/tracks')).rejects.toThrow(
+      /Spotify API 403 Forbidden: \/playlists\/abc\/tracks .*Forbidden/,
+    );
+  });
+
+  it('passes through absolute URLs without prepending the base', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await spotifyFetch('https://api.spotify.com/v1/me');
+
+    const [calledUrl] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(calledUrl).toBe('https://api.spotify.com/v1/me');
   });
 });

@@ -1,12 +1,17 @@
 import type { MaxInt } from '@spotify/web-api-ts-sdk';
 import { z } from 'zod';
-import type { SpotifyHandlerExtra, SpotifyTrack } from './types.js';
+import type {
+  PlaylistItemsResponse,
+  SpotifyHandlerExtra,
+  SpotifyTrack,
+} from './types.js';
 import { defineTool } from './types.js';
 import {
   formatDuration,
   formatTrackMeta,
   getCurrentAccessToken,
   handleSpotifyRequest,
+  spotifyFetch,
 } from './utils.js';
 
 function isTrack(item: any): item is SpotifyTrack {
@@ -246,8 +251,15 @@ const getMyPlaylists = defineTool({
 
     const formattedPlaylists = playlists.items
       .map((playlist, i) => {
-        const tracksTotal = playlist.tracks?.total ? playlist.tracks.total : 0;
-        return `${i + 1}. "${playlist.name}" (${tracksTotal} tracks) - ID: ${
+        // Spotify's Feb 2026 migration stopped populating `tracks.total` on
+        // simplified-playlist objects for some app tiers; render `?` instead
+        // of a misleading `0` when it's missing.
+        const tracksTotal = playlist.tracks?.total;
+        const countLabel =
+          typeof tracksTotal === 'number' && tracksTotal > 0
+            ? `${tracksTotal} tracks`
+            : '? tracks';
+        return `${i + 1}. "${playlist.name}" (${countLabel}) - ID: ${
           playlist.id
         }`;
       })
@@ -284,15 +296,11 @@ const getPlaylistTracks = defineTool({
   handler: async (args, _extra: SpotifyHandlerExtra) => {
     const { playlistId, limit = 50, offset = 0 } = args;
 
-    const playlistTracks = await handleSpotifyRequest(async (spotifyApi) => {
-      return await spotifyApi.playlists.getPlaylistItems(
-        playlistId,
-        undefined,
-        undefined,
-        limit as MaxInt<50>,
-        offset,
-      );
-    });
+    // Bypass the SDK: it still calls the legacy /playlists/{id}/tracks path
+    // which returns 403 after the Feb 2026 migration. Hit /items directly.
+    const playlistTracks = await spotifyFetch<PlaylistItemsResponse>(
+      `/playlists/${encodeURIComponent(playlistId)}/items?limit=${limit}&offset=${offset}`,
+    );
 
     if ((playlistTracks.items?.length ?? 0) === 0) {
       return {

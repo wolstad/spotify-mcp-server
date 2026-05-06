@@ -17,6 +17,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that le
 - [Integrating with Claude Desktop, Cursor, and Cline](#integrating-with-claude-desktop-cursor-and-cline)
 - [Tools](#tools)
   - [Metadata enrichment (for organizing playlists)](#metadata-enrichment-for-organizing-playlists)
+- [Known limitations](#known-limitations)
 - [Development](#development)
 </details>
 
@@ -325,6 +326,10 @@ The list-style tools (`searchSpotify`, `getPlaylistTracks`, `getRecentlyPlayed`,
 Not supported. Spotify deprecated `audio-features`, `audio-analysis`, `recommendations`, `related-artists`, and 30-second preview URLs in [November 2024](https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api), and [further reduced the API surface in February 2026](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide) (removed batch GETs, removed `browse/*`, removed `artists/{id}/top-tracks`, renamed playlist `/tracks` to `/items`, collapsed library calls to a generic `/me/library`). Apps with grandfathered extended-quota access can still call the deprecated endpoints; new apps and Development Mode apps cannot.
 
 This server organizes playlists using only what's still available: **genres** (joined from artists), **popularity**, **release date**, **explicit** flag, **album type**, and **label**. That covers grouping by genre, sorting by era, separating deep cuts from hits, splitting clean vs. explicit, and indie vs. major-label — but not BPM matching.
+
+## Known limitations
+
+- **Feb 2026 Spotify API migration.** Spotify renamed `/playlists/{id}/tracks` → `/playlists/{id}/items` and stopped populating `tracks.total` on simplified-playlist objects for some app tiers. The upstream SDK (`@spotify/web-api-ts-sdk@1.2.0`, dormant since 2024) hasn't been updated, so this fork bypasses it for `getPlaylistTracks` and `enrichPlaylistMetadata` via a thin `spotifyFetch` helper in `src/utils.ts`. `getMyPlaylists` and `getPlaylist` render `?` for the track count when Spotify omits it rather than reporting a misleading `0`.
 
 ## Development
 

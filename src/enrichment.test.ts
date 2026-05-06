@@ -9,13 +9,15 @@ vi.mock('./utils.js', async () => {
   return {
     ...actual,
     handleSpotifyRequest: vi.fn(),
+    spotifyFetch: vi.fn(),
   };
 });
 
 import { _internal, enrichmentTools } from './enrichment.js';
-import { handleSpotifyRequest } from './utils.js';
+import { handleSpotifyRequest, spotifyFetch } from './utils.js';
 
 const mockedHandle = vi.mocked(handleSpotifyRequest);
+const mockedFetch = vi.mocked(spotifyFetch);
 
 function toolByName(name: string) {
   const tool = enrichmentTools.find((t) => t.name === name);
@@ -82,6 +84,7 @@ const fakeExtra = {} as any;
 
 beforeEach(() => {
   mockedHandle.mockReset();
+  mockedFetch.mockReset();
 });
 
 describe('toSpotifyTrack', () => {
@@ -159,11 +162,9 @@ describe('enrichPlaylistMetadata', () => {
       a3: makeArtist('a3', 'A3', ['ambient']),
     };
 
+    mockedFetch.mockResolvedValue(playlistResponse);
     mockedHandle.mockImplementation(async (action: any) => {
       const fakeApi = {
-        playlists: {
-          getPlaylistItems: vi.fn().mockResolvedValue(playlistResponse),
-        },
         artists: {
           get: (id: string) => Promise.resolve(artistsById[id]),
         },
@@ -204,11 +205,9 @@ describe('enrichPlaylistMetadata', () => {
   });
 
   it('returns an empty-tracks message rather than failing on an empty range', async () => {
+    mockedFetch.mockResolvedValue({ items: [], total: 0 });
     mockedHandle.mockImplementation(async (action: any) => {
       const fakeApi = {
-        playlists: {
-          getPlaylistItems: vi.fn().mockResolvedValue({ items: [], total: 0 }),
-        },
         artists: { get: vi.fn() },
       };
       return action(fakeApi);
@@ -226,13 +225,9 @@ describe('enrichPlaylistMetadata', () => {
 
   it('handles tracks whose artists return no genres (artist_genres = [])', async () => {
     const track = makeTrack('t1', 'Song', ['a1']);
+    mockedFetch.mockResolvedValue({ items: [{ track }], total: 1 });
     mockedHandle.mockImplementation(async (action: any) => {
       const fakeApi = {
-        playlists: {
-          getPlaylistItems: vi
-            .fn()
-            .mockResolvedValue({ items: [{ track }], total: 1 }),
-        },
         artists: {
           get: () => Promise.resolve(makeArtist('a1', 'A1', [])),
         },

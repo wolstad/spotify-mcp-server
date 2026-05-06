@@ -474,6 +474,40 @@ export function formatTrackMeta(track: {
   return parts.length ? ` [${parts.join(' · ')}]` : '';
 }
 
+const SPOTIFY_API_BASE = 'https://api.spotify.com/v1';
+
+// Direct HTTP path to Spotify, used for endpoints the SDK can't reach because
+// `@spotify/web-api-ts-sdk@1.2.0` (latest, dormant since 2024) hasn't been
+// updated for the Feb 2026 API migration. Auth + refresh are reused from
+// `getCurrentAccessToken`; we don't fork the auth layer.
+export async function spotifyFetch<T = unknown>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const accessToken = await getCurrentAccessToken();
+  const url = path.startsWith('http') ? path : `${SPOTIFY_API_BASE}${path}`;
+
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      ...init.headers,
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(
+      `Spotify API ${response.status} ${response.statusText}: ${path}${body ? ` ${body}` : ''}`,
+    );
+  }
+
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
 export async function handleSpotifyRequest<T>(
   action: (spotifyApi: SpotifyApi) => Promise<T>,
 ): Promise<T> {
