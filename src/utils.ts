@@ -4,10 +4,62 @@ import http from 'node:http';
 import path from 'node:path';
 import { URL, fileURLToPath } from 'node:url';
 import { SpotifyApi } from '@spotify/web-api-ts-sdk';
+import dotenv from 'dotenv';
 import open from 'open';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TOKEN_FILE = path.join(__dirname, '../.spotify-tokens');
+const PROJECT_DIR = path.join(__dirname, '..');
+const SYSTEM_STATE_DIR = '/etc/spotify-mcp';
+const FALLBACK_DEPRECATION_MESSAGE =
+  '[deprecation] Loading state from project directory; move .env and .spotify-tokens to /etc/spotify-mcp/ (will be removed in v2.0)';
+
+let hasWarnedAboutFallback = false;
+
+/**
+ * Resolve where to look for `.env` and `.spotify-tokens`.
+ *
+ * Order:
+ *   1. `SPOTIFY_MCP_STATE_DIR` env override — explicit, no fallback, no warning.
+ *   2. `/etc/spotify-mcp/` if it exists on disk.
+ *   3. The project directory (`__dirname/..`) as a backward-compat fallback.
+ *
+ * The override is the seam used by the installer's tests and by Mac dev
+ * workflows that want to keep state in the checkout without triggering the
+ * deprecation warning.
+ */
+export function resolveStateDir(): { dir: string; isFallback: boolean } {
+  const override = process.env.SPOTIFY_MCP_STATE_DIR;
+  if (override) return { dir: override, isFallback: false };
+  if (fs.existsSync(SYSTEM_STATE_DIR)) {
+    return { dir: SYSTEM_STATE_DIR, isFallback: false };
+  }
+  return { dir: PROJECT_DIR, isFallback: true };
+}
+
+function warnFallbackOnce(): void {
+  if (hasWarnedAboutFallback) return;
+  hasWarnedAboutFallback = true;
+  console.error(FALLBACK_DEPRECATION_MESSAGE);
+}
+
+function tokenFilePath(): string {
+  return path.join(resolveStateDir().dir, '.spotify-tokens');
+}
+
+/**
+ * Load `.env` from the resolved state directory. Replaces the
+ * `import 'dotenv/config'` side-effect import the entry points used to do.
+ *
+ * Must run before any module that reads `process.env` at import time —
+ * call this on the very first line of `index.ts` and `auth.ts`.
+ */
+export function loadDotenv(): void {
+  const { dir, isFallback } = resolveStateDir();
+  const envPath = path.join(dir, '.env');
+  if (!fs.existsSync(envPath)) return;
+  dotenv.config({ path: envPath });
+  if (isFallback) warnFallbackOnce();
+}
 
 export interface SpotifyCredentials {
   clientId: string;
@@ -36,9 +88,12 @@ export function loadCredentials(): SpotifyCredentials {
 }
 
 export function loadTokenCache(): SpotifyTokenCache {
-  if (!fs.existsSync(TOKEN_FILE)) return {};
+  const { dir, isFallback } = resolveStateDir();
+  const tokenFile = path.join(dir, '.spotify-tokens');
+  if (!fs.existsSync(tokenFile)) return {};
+  if (isFallback) warnFallbackOnce();
 
-  const contents = fs.readFileSync(TOKEN_FILE, 'utf8');
+  const contents = fs.readFileSync(tokenFile, 'utf8');
   const parsed = parseEnvFile(contents);
   const expiresAtRaw = parsed.SPOTIFY_EXPIRES_AT;
   return {
@@ -49,6 +104,7 @@ export function loadTokenCache(): SpotifyTokenCache {
 }
 
 export function saveTokenCache(tokens: SpotifyTokenCache): void {
+  const tokenFile = tokenFilePath();
   const lines: string[] = [];
   if (tokens.accessToken) {
     lines.push(`SPOTIFY_ACCESS_TOKEN=${tokens.accessToken}`);
@@ -59,12 +115,12 @@ export function saveTokenCache(tokens: SpotifyTokenCache): void {
   if (tokens.expiresAt !== undefined) {
     lines.push(`SPOTIFY_EXPIRES_AT=${tokens.expiresAt}`);
   }
-  fs.writeFileSync(TOKEN_FILE, `${lines.join('\n')}\n`, {
+  fs.writeFileSync(tokenFile, `${lines.join('\n')}\n`, {
     encoding: 'utf8',
     mode: 0o600,
   });
   // Ensure mode is correct even if the file already existed.
-  fs.chmodSync(TOKEN_FILE, 0o600);
+  fs.chmodSync(tokenFile, 0o600);
 }
 
 export function parseEnvFile(contents: string): Record<string, string> {
@@ -346,7 +402,7 @@ export async function authorizeSpotify(): Promise<void> {
             '<html><body><h1>Authentication Successful!</h1><p>You can now close this window and return to the application.</p></body></html>',
           );
           console.error(
-            'Authentication successful! Tokens saved to .spotify-tokens (mode 0600).',
+            `Authentication successful! Tokens saved to ${tokenFilePath()} (mode 0600).`,
           );
 
           server.close();

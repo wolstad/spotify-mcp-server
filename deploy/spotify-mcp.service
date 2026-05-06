@@ -9,7 +9,8 @@ Type=simple
 User=spotify-mcp
 Group=spotify-mcp
 WorkingDirectory=/opt/spotify-mcp
-EnvironmentFile=/opt/spotify-mcp/.env
+EnvironmentFile=/etc/spotify-mcp/.env
+Environment=SPOTIFY_MCP_STATE_DIR=/etc/spotify-mcp
 ExecStart=/usr/bin/node /opt/spotify-mcp/build/index.js
 Restart=on-failure
 RestartSec=5
@@ -19,8 +20,9 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-# Allow writing only to the app directory (token cache lives here).
-ReadWritePaths=/opt/spotify-mcp
+# Allow writing only to the state directory (token cache lives here).
+# The code directory at /opt/spotify-mcp does not need write access at runtime.
+ReadWritePaths=/etc/spotify-mcp
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

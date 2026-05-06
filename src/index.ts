@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import 'dotenv/config';
+import './bootstrap.js';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -101,11 +101,6 @@ const ANNOTATIONS: Record<string, ToolAnnotations> = {
   reorderPlaylistItems: { openWorldHint: true },
 };
 
-const server = new McpServer({
-  name: 'spotify-controller',
-  version: '1.1.0',
-});
-
 const allTools = [
   ...readTools,
   ...playTools,
@@ -114,23 +109,33 @@ const allTools = [
   ...enrichmentTools,
 ];
 
-for (const tool of allTools) {
-  server.registerTool(
-    tool.name,
-    {
-      title: tool.title ?? TITLES[tool.name] ?? tool.name,
-      description: tool.description,
-      inputSchema: tool.schema,
-      annotations: tool.annotations ?? ANNOTATIONS[tool.name],
-    },
-    tool.handler as any,
-  );
+// HTTP transport needs a fresh McpServer per session — the SDK's Server holds
+// initialization state that can't be reused across clients. stdio uses a
+// single instance for the lifetime of the process.
+function createServer(): McpServer {
+  const server = new McpServer({
+    name: 'spotify-controller',
+    version: '1.1.0',
+  });
+  for (const tool of allTools) {
+    server.registerTool(
+      tool.name,
+      {
+        title: tool.title ?? TITLES[tool.name] ?? tool.name,
+        description: tool.description,
+        inputSchema: tool.schema,
+        annotations: tool.annotations ?? ANNOTATIONS[tool.name],
+      },
+      tool.handler as any,
+    );
+  }
+  return server;
 }
 
 async function main() {
   const transport = (process.env.MCP_TRANSPORT ?? 'stdio').toLowerCase();
   if (transport === 'http') {
-    await startHttpServer(server, loadHttpConfig());
+    await startHttpServer(createServer, loadHttpConfig());
     return;
   }
   if (transport !== 'stdio') {
@@ -138,7 +143,7 @@ async function main() {
       `Unsupported MCP_TRANSPORT '${transport}'. Use 'stdio' (default) or 'http'.`,
     );
   }
-  await server.connect(new StdioServerTransport());
+  await createServer().connect(new StdioServerTransport());
 }
 
 main().catch((error) => {

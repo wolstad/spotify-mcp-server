@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import 'dotenv/config';
+import './bootstrap.js';
 
 import { authorizeSpotify } from './utils.js';
 
