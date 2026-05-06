@@ -369,14 +369,16 @@ export async function authorizeSpotify(): Promise<void> {
       console.error(
         `Listening for Spotify authentication callback on port ${port}`,
       );
-      console.error('Opening browser for authorization…');
+      console.error('');
+      console.error('Open this URL in your browser to authorize:');
+      console.error('');
+      console.error(authorizationUrl);
+      console.error('');
+      console.error(`Waiting for callback on ${credentials.redirectUri} …`);
 
-      open(authorizationUrl).catch((_error: Error) => {
-        console.error(
-          'Failed to open browser automatically. Please visit this URL to authorize:',
-        );
-        console.error(authorizationUrl);
-      });
+      // Best-effort browser launch — no-op on headless systems where
+      // the user already has the URL above and can paste it manually.
+      open(authorizationUrl).catch(() => {});
     });
 
     server.on('error', (error) => {

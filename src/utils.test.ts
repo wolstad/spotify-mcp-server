@@ -1,5 +1,24 @@
-import { describe, expect, it } from 'vitest';
-import { formatDuration, formatTrackMeta, parseEnvFile } from './utils.js';
+import http from 'node:http';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Intercept the `open` package so tests don't actually try to launch a
+// browser. The mocked default export returns a never-resolving promise to
+// simulate the headless-server case where xdg-open hangs silently.
+vi.mock('open', () => ({
+  default: vi.fn(
+    () =>
+      new Promise(() => {
+        /* never resolves */
+      }),
+  ),
+}));
+
+import {
+  authorizeSpotify,
+  formatDuration,
+  formatTrackMeta,
+  parseEnvFile,
+} from './utils.js';
 
 describe('formatDuration', () => {
   it('formats sub-minute durations with leading zero', () => {
@@ -83,5 +102,69 @@ describe('formatTrackMeta', () => {
 
   it('includes popularity of 0 (not falsy-skipped)', () => {
     expect(formatTrackMeta({ popularity: 0 })).toBe(' [pop 0]');
+  });
+});
+
+describe('authorizeSpotify', () => {
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+  let createServerSpy: ReturnType<typeof vi.spyOn>;
+  let createdServers: http.Server[];
+  let originalEnv: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    originalEnv = {
+      SPOTIFY_CLIENT_ID: process.env.SPOTIFY_CLIENT_ID,
+      SPOTIFY_CLIENT_SECRET: process.env.SPOTIFY_CLIENT_SECRET,
+      SPOTIFY_REDIRECT_URI: process.env.SPOTIFY_REDIRECT_URI,
+    };
+    process.env.SPOTIFY_CLIENT_ID = 'test-client-id';
+    process.env.SPOTIFY_CLIENT_SECRET = 'test-client-secret';
+    // Port 0 lets the OS pick a free port so parallel test runs don't collide.
+    process.env.SPOTIFY_REDIRECT_URI = 'http://127.0.0.1:0/callback';
+
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    createdServers = [];
+    const realCreate = http.createServer.bind(http);
+    createServerSpy = vi.spyOn(http, 'createServer').mockImplementation(((
+      handler: http.RequestListener,
+    ) => {
+      const server = realCreate(handler);
+      createdServers.push(server);
+      return server;
+    }) as typeof http.createServer);
+  });
+
+  afterEach(async () => {
+    consoleErrorSpy.mockRestore();
+    createServerSpy.mockRestore();
+    await Promise.all(
+      createdServers.map(
+        (s) => new Promise<void>((resolve) => s.close(() => resolve())),
+      ),
+    );
+    for (const [k, v] of Object.entries(originalEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it('prints the authorization URL to stderr before any browser launch', async () => {
+    void authorizeSpotify().catch(() => {
+      /* promise never resolves in this test path */
+    });
+
+    // Wait for server.listen's callback to fire and the URL to be logged.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const messages = consoleErrorSpy.mock.calls.map((c) => String(c[0]));
+    const urlMessage = messages.find((m) =>
+      m.startsWith('https://accounts.spotify.com/authorize?'),
+    );
+
+    expect(urlMessage).toBeDefined();
+    expect(urlMessage).toContain('client_id=test-client-id');
+    expect(urlMessage).toContain('state=');
+    expect(urlMessage).toContain('redirect_uri=');
   });
 });
