@@ -12,7 +12,7 @@ vi.mock('./utils.js', async () => {
   };
 });
 
-import { readTools } from './read.js';
+import { formatMyPlaylists, readTools } from './read.js';
 import { spotifyFetch } from './utils.js';
 
 const mockedFetch = vi.mocked(spotifyFetch);
@@ -95,5 +95,84 @@ describe('getPlaylistTracks (post-Feb-2026 shape)', () => {
     );
     const text = (result.content[0] as { text: string }).text;
     expect(text).toContain('[Track unavailable]');
+  });
+});
+
+describe('formatMyPlaylists', () => {
+  const base = { id: 'x', public: true, collaborative: false, description: '' };
+
+  it('omits owner when self-owned', () => {
+    const out = formatMyPlaylists(
+      { items: [{ ...base, name: 'My Mix', owner: { id: 'me' } }], total: 1 },
+      'me',
+    );
+    expect(out).toContain('"My Mix" (public)');
+    expect(out).not.toMatch(/by /);
+  });
+
+  it('shows owner when not self-owned', () => {
+    const out = formatMyPlaylists(
+      {
+        items: [
+          {
+            ...base,
+            name: 'Discover Weekly',
+            public: false,
+            owner: { id: 'spotify', display_name: 'Spotify' },
+          },
+        ],
+        total: 1,
+      },
+      'me',
+    );
+    expect(out).toContain('"Discover Weekly" by Spotify (private)');
+  });
+
+  it('renders collaborative correctly', () => {
+    const out = formatMyPlaylists(
+      {
+        items: [
+          {
+            ...base,
+            name: 'Group',
+            public: false,
+            collaborative: true,
+            owner: { id: 'me' },
+          },
+        ],
+        total: 1,
+      },
+      'me',
+    );
+    expect(out).toContain('(private, collaborative)');
+  });
+
+  it('truncates long descriptions to <=80 chars with an ellipsis', () => {
+    const long = 'x'.repeat(200);
+    const out = formatMyPlaylists(
+      {
+        items: [{ ...base, name: 'P', owner: { id: 'me' }, description: long }],
+        total: 1,
+      },
+      'me',
+    );
+    expect(out).toContain('…');
+    expect(out).not.toContain('x'.repeat(100));
+  });
+
+  it('includes total in header', () => {
+    const out = formatMyPlaylists(
+      { items: [{ ...base, name: 'P', owner: { id: 'me' } }], total: 52 },
+      'me',
+    );
+    expect(out).toMatch(/52 total/);
+  });
+
+  it('falls back to owner.id when display_name is missing', () => {
+    const out = formatMyPlaylists(
+      { items: [{ ...base, name: 'P', owner: { id: 'someone' } }], total: 1 },
+      'me',
+    );
+    expect(out).toContain('by someone');
   });
 });
