@@ -330,6 +330,7 @@ This server organizes playlists using only what's still available: **genres** (j
 ## Known limitations
 
 - **Feb 2026 Spotify API migration.** Spotify renamed `/playlists/{id}/tracks` → `/playlists/{id}/items` and stopped populating `tracks.total` on simplified-playlist objects for some app tiers. The upstream SDK (`@spotify/web-api-ts-sdk@1.2.0`, dormant since 2024) hasn't been updated, so this fork bypasses it for `getPlaylistTracks` and `enrichPlaylistMetadata` via a thin `spotifyFetch` helper in `src/utils.ts`. `getMyPlaylists` and `getPlaylist` render `?` for the track count when Spotify omits it rather than reporting a misleading `0`.
+- **Podcast episodes inside playlists.** Track-listing tools (`getPlaylistTracks`, `enrichPlaylistMetadata`) skip episodes; `getPlaylistTracks` shows them as `[Podcast episode — not displayed]`. There is no read-side episode tool — use the Spotify mobile/desktop apps to browse episodes.
 
 ## Development
 

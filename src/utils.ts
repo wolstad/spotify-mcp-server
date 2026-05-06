@@ -6,6 +6,7 @@ import { URL, fileURLToPath } from 'node:url';
 import { SpotifyApi } from '@spotify/web-api-ts-sdk';
 import dotenv from 'dotenv';
 import open from 'open';
+import type { SpotifyTrack } from './types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.join(__dirname, '..');
@@ -472,6 +473,36 @@ export function formatTrackMeta(track: {
   }
   if (track.explicit) parts.push('E');
   return parts.length ? ` [${parts.join(' · ')}]` : '';
+}
+
+// Spotify's Feb 2026 migration moved each /playlists/{id}/items entry's track
+// payload from `entry.track` to `entry.item`, and reused `entry.track` as a
+// boolean discriminator (true = track, false = podcast episode). Returns null
+// for episodes and for entries that don't contain a track-shaped payload.
+// https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide
+export function extractTrackFromPlaylistItem(
+  entry: unknown,
+): SpotifyTrack | null {
+  if (!entry || typeof entry !== 'object') return null;
+  const e = entry as Record<string, unknown>;
+
+  if (e.track === false) return null;
+
+  const item = e.item;
+  if (!item || typeof item !== 'object') return null;
+
+  const t = item as Record<string, unknown>;
+  if (t.episode === true || t.type === 'episode') return null;
+
+  if (
+    t.type === 'track' &&
+    Array.isArray(t.artists) &&
+    t.album &&
+    typeof (t.album as { name?: unknown }).name === 'string'
+  ) {
+    return item as SpotifyTrack;
+  }
+  return null;
 }
 
 const SPOTIFY_API_BASE = 'https://api.spotify.com/v1';

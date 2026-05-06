@@ -153,7 +153,7 @@ describe('enrichPlaylistMetadata', () => {
       makeTrack('t2', 'Song 2', ['a2', 'a3']),
     ];
     const playlistResponse = {
-      items: tracks.map((t) => ({ track: t })),
+      items: tracks.map((t) => ({ item: t, track: true })),
       total: 2,
     };
     const artistsById: Record<string, ReturnType<typeof makeArtist>> = {
@@ -225,7 +225,10 @@ describe('enrichPlaylistMetadata', () => {
 
   it('handles tracks whose artists return no genres (artist_genres = [])', async () => {
     const track = makeTrack('t1', 'Song', ['a1']);
-    mockedFetch.mockResolvedValue({ items: [{ track }], total: 1 });
+    mockedFetch.mockResolvedValue({
+      items: [{ item: track, track: true }],
+      total: 1,
+    });
     mockedHandle.mockImplementation(async (action: any) => {
       const fakeApi = {
         artists: {

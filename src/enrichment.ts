@@ -8,7 +8,11 @@ import type {
   SpotifyTrack,
 } from './types.js';
 import { defineTool } from './types.js';
-import { handleSpotifyRequest, spotifyFetch } from './utils.js';
+import {
+  extractTrackFromPlaylistItem,
+  handleSpotifyRequest,
+  spotifyFetch,
+} from './utils.js';
 
 // Spotify removed batch GET /artists in February 2026, so we have to fan out
 // per-artist requests. Cap concurrency to avoid hitting the rate limit when a
@@ -232,10 +236,9 @@ const enrichPlaylistMetadata = defineTool({
       );
 
       const tracks: Track[] = [];
-      for (const item of playlistItems.items) {
-        if (item.track && (item.track as { type?: string }).type === 'track') {
-          tracks.push(item.track as Track);
-        }
+      for (const entry of playlistItems.items) {
+        const track = extractTrackFromPlaylistItem(entry);
+        if (track) tracks.push(track as unknown as Track);
       }
 
       if (tracks.length === 0) {

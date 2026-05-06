@@ -18,6 +18,7 @@ vi.mock('open', () => ({
 
 import {
   authorizeSpotify,
+  extractTrackFromPlaylistItem,
   formatDuration,
   formatTrackMeta,
   loadTokenCache,
@@ -109,6 +110,57 @@ describe('formatTrackMeta', () => {
 
   it('includes popularity of 0 (not falsy-skipped)', () => {
     expect(formatTrackMeta({ popularity: 0 })).toBe(' [pop 0]');
+  });
+});
+
+describe('extractTrackFromPlaylistItem', () => {
+  it('extracts a track from a post-Feb-2026 playlist-items entry', () => {
+    const entry = {
+      added_at: '2014-12-27T23:44:28Z',
+      track: true,
+      item: {
+        type: 'track',
+        episode: false,
+        name: 'Muscle Memory',
+        id: 'abc123',
+        artists: [{ name: 'Lights' }],
+        album: { name: 'Little Machines' },
+        duration_ms: 216_013,
+      },
+    };
+    const result = extractTrackFromPlaylistItem(entry);
+    expect(result).not.toBeNull();
+    expect(result?.name).toBe('Muscle Memory');
+    expect(result?.id).toBe('abc123');
+  });
+
+  it('returns null for podcast episodes', () => {
+    expect(
+      extractTrackFromPlaylistItem({
+        track: false,
+        item: { type: 'episode', episode: true, name: 'Some Podcast Ep' },
+      }),
+    ).toBeNull();
+  });
+
+  it('returns null when the item payload is missing', () => {
+    expect(extractTrackFromPlaylistItem({ added_at: '...' })).toBeNull();
+    expect(extractTrackFromPlaylistItem(null)).toBeNull();
+    expect(extractTrackFromPlaylistItem(undefined)).toBeNull();
+  });
+
+  it('returns null if a legacy-shape entry leaks through (defensive)', () => {
+    expect(
+      extractTrackFromPlaylistItem({
+        track: {
+          type: 'track',
+          name: 'Old Shape',
+          id: 'xyz',
+          artists: [],
+          album: { name: 'A' },
+        },
+      }),
+    ).toBeNull();
   });
 });
 
