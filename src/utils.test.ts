@@ -1,4 +1,7 @@
+import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Intercept the `open` package so tests don't actually try to launch a
@@ -17,7 +20,10 @@ import {
   authorizeSpotify,
   formatDuration,
   formatTrackMeta,
+  loadTokenCache,
   parseEnvFile,
+  resolveStateDir,
+  saveTokenCache,
 } from './utils.js';
 
 describe('formatDuration', () => {
@@ -102,6 +108,115 @@ describe('formatTrackMeta', () => {
 
   it('includes popularity of 0 (not falsy-skipped)', () => {
     expect(formatTrackMeta({ popularity: 0 })).toBe(' [pop 0]');
+  });
+});
+
+describe('resolveStateDir', () => {
+  let originalOverride: string | undefined;
+
+  beforeEach(() => {
+    originalOverride = process.env.SPOTIFY_MCP_STATE_DIR;
+  });
+
+  afterEach(() => {
+    if (originalOverride === undefined) {
+      Reflect.deleteProperty(process.env, 'SPOTIFY_MCP_STATE_DIR');
+    } else {
+      process.env.SPOTIFY_MCP_STATE_DIR = originalOverride;
+    }
+    vi.restoreAllMocks();
+  });
+
+  it('uses SPOTIFY_MCP_STATE_DIR override and reports no fallback', () => {
+    process.env.SPOTIFY_MCP_STATE_DIR = '/tmp/spotify-mcp-test-override';
+    expect(resolveStateDir()).toEqual({
+      dir: '/tmp/spotify-mcp-test-override',
+      isFallback: false,
+    });
+  });
+
+  it('uses /etc/spotify-mcp/ when it exists and no override is set', () => {
+    Reflect.deleteProperty(process.env, 'SPOTIFY_MCP_STATE_DIR');
+    vi.spyOn(fs, 'existsSync').mockImplementation(
+      (p) => String(p) === '/etc/spotify-mcp',
+    );
+    expect(resolveStateDir()).toEqual({
+      dir: '/etc/spotify-mcp',
+      isFallback: false,
+    });
+  });
+
+  it('falls back to the project directory when no override and /etc is absent', () => {
+    Reflect.deleteProperty(process.env, 'SPOTIFY_MCP_STATE_DIR');
+    vi.spyOn(fs, 'existsSync').mockReturnValue(false);
+    const result = resolveStateDir();
+    expect(result.isFallback).toBe(true);
+    // Project dir resolves to the repo root (one level above src/), so it
+    // must be an absolute path that does not point at /etc/spotify-mcp.
+    expect(path.isAbsolute(result.dir)).toBe(true);
+    expect(result.dir).not.toBe('/etc/spotify-mcp');
+  });
+
+  it('lets the override beat /etc/spotify-mcp/ even when /etc exists', () => {
+    process.env.SPOTIFY_MCP_STATE_DIR = '/tmp/explicit-wins';
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    expect(resolveStateDir()).toEqual({
+      dir: '/tmp/explicit-wins',
+      isFallback: false,
+    });
+  });
+});
+
+describe('saveTokenCache + loadTokenCache', () => {
+  let tmpDir: string;
+  let originalOverride: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spotify-mcp-test-'));
+    originalOverride = process.env.SPOTIFY_MCP_STATE_DIR;
+    process.env.SPOTIFY_MCP_STATE_DIR = tmpDir;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    if (originalOverride === undefined) {
+      Reflect.deleteProperty(process.env, 'SPOTIFY_MCP_STATE_DIR');
+    } else {
+      process.env.SPOTIFY_MCP_STATE_DIR = originalOverride;
+    }
+  });
+
+  it('writes tokens to the resolved state directory', () => {
+    saveTokenCache({
+      accessToken: 'access-1',
+      refreshToken: 'refresh-1',
+      expiresAt: 1_700_000_000_000,
+    });
+    const tokenPath = path.join(tmpDir, '.spotify-tokens');
+    expect(fs.existsSync(tokenPath)).toBe(true);
+  });
+
+  it('writes the token file with mode 0600', () => {
+    saveTokenCache({ accessToken: 'a', refreshToken: 'r', expiresAt: 1 });
+    const stat = fs.statSync(path.join(tmpDir, '.spotify-tokens'));
+    expect(stat.mode & 0o777).toBe(0o600);
+  });
+
+  it('round-trips through saveTokenCache and loadTokenCache', () => {
+    saveTokenCache({
+      accessToken: 'access-xyz',
+      refreshToken: 'refresh-xyz',
+      expiresAt: 1_700_000_000_000,
+    });
+    expect(loadTokenCache()).toEqual({
+      accessToken: 'access-xyz',
+      refreshToken: 'refresh-xyz',
+      expiresAt: 1_700_000_000_000,
+    });
+  });
+
+  it('returns an empty cache when no token file exists', () => {
+    expect(loadTokenCache()).toEqual({});
   });
 });
 
