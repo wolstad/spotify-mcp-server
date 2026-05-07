@@ -114,4 +114,93 @@ describe('startHttpServer (per-session transport)', () => {
     expect(res.status).toBe(401);
     await res.body?.cancel();
   });
+
+  // Regression test: previously, when the SDK's transport.onclose fired (which
+  // happens when an SSE stream disconnects — e.g. a client's long-lived GET
+  // /mcp channel closes after a timeout, or Claude Desktop's 60s budget fires
+  // mid-response), the server eagerly deleted the session from its map. Every
+  // subsequent request from that client then returned 404 "Unknown
+  // Mcp-Session-Id" until the client restarted. The fix removed the eager
+  // deletion; sessions now outlive individual streams.
+  it('keeps the session alive when a long-lived SSE stream is aborted', async () => {
+    const initRes = await postInitialize(handle.port);
+    expect(initRes.status).toBe(200);
+    const sessionId = initRes.headers.get('mcp-session-id');
+    expect(sessionId).toBeTruthy();
+    await initRes.body?.cancel();
+
+    // Open the server-initiated message stream (GET /mcp) and abort it. This
+    // is the connection that triggers transport.onclose in real clients.
+    const aborter = new AbortController();
+    const sseRes = await fetch(`http://127.0.0.1:${handle.port}/mcp`, {
+      method: 'GET',
+      headers: {
+        Accept: 'text/event-stream',
+        Authorization: `Bearer ${TEST_TOKEN}`,
+        'Mcp-Session-Id': sessionId as string,
+      },
+      signal: aborter.signal,
+    }).catch((err) => err as Error);
+    // The GET may either succeed (we then abort) or be rejected immediately
+    // depending on SDK version; either way we want the connection torn down.
+    if (sseRes instanceof Response) {
+      aborter.abort();
+      await sseRes.body?.cancel().catch(() => {});
+    }
+    // Give the server time to observe the closed stream and run any handlers.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // The session must still be usable.
+    const followUp = await fetch(`http://127.0.0.1:${handle.port}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${TEST_TOKEN}`,
+        'Mcp-Session-Id': sessionId as string,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/list' }),
+    });
+    expect(followUp.status).toBe(200);
+    await followUp.body?.cancel();
+  });
+
+  it('terminates a session via DELETE and 404s subsequent requests', async () => {
+    const initRes = await postInitialize(handle.port);
+    expect(initRes.status).toBe(200);
+    const sessionId = initRes.headers.get('mcp-session-id');
+    expect(sessionId).toBeTruthy();
+    await initRes.body?.cancel();
+
+    const del = await fetch(`http://127.0.0.1:${handle.port}/mcp`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${TEST_TOKEN}`,
+        'Mcp-Session-Id': sessionId as string,
+      },
+    });
+    expect(del.status).toBe(204);
+
+    const after = await fetch(`http://127.0.0.1:${handle.port}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${TEST_TOKEN}`,
+        'Mcp-Session-Id': sessionId as string,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/list' }),
+    });
+    expect(after.status).toBe(404);
+    await after.body?.cancel();
+  });
+
+  it('rejects DELETE without a session header', async () => {
+    const res = await fetch(`http://127.0.0.1:${handle.port}/mcp`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+    });
+    expect(res.status).toBe(400);
+    await res.body?.cancel();
+  });
 });

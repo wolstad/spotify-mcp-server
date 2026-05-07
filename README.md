@@ -3,7 +3,7 @@
 <h1>Spotify MCP Server</h1>
 </div>
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that lets AI assistants like Claude and Cursor control Spotify playback and manage playlists. Built to run as a native Node service — locally for stdio MCP clients, or on a LAN host (e.g. a Proxmox LXC) over HTTP.
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that lets any MCP client control Spotify playback and manage playlists. Built to run as a native Node service — locally for stdio MCP clients, or on a LAN host (e.g. a Proxmox LXC) over HTTP.
 
 > **This is a fork of [marcelmarais/spotify-mcp-server](https://github.com/marcelmarais/spotify-mcp-server).** See [What's different in this fork](#whats-different-in-this-fork) for the changes.
 
@@ -14,7 +14,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that le
 - [Quick start (local, stdio)](#quick-start-local-stdio)
 - [Remote install on a Proxmox LXC (HTTP transport)](#remote-install-on-a-proxmox-lxc-http-transport)
 - [Authentication & token refresh](#authentication--token-refresh)
-- [Integrating with Claude Desktop, Cursor, and Cline](#integrating-with-claude-desktop-cursor-and-cline)
+- [Integrating with MCP clients](#integrating-with-mcp-clients)
 - [Tools](#tools)
   - [Metadata enrichment (for organizing playlists)](#metadata-enrichment-for-organizing-playlists)
 - [Known limitations](#known-limitations)
@@ -44,7 +44,7 @@ This fork is based on upstream commit [`969576b`](https://github.com/marcelmarai
 
 ## Quick start (local, stdio)
 
-For running on the same machine as your MCP client (Claude Desktop, Cursor, Cline).
+For running on the same machine as your MCP client.
 
 ```bash
 git clone https://github.com/wolstad/spotify-mcp-server.git
@@ -57,7 +57,7 @@ npm run auth          # one-time OAuth flow (opens browser)
 node build/index.js   # runs the MCP server on stdio
 ```
 
-Then point your MCP client at `node /absolute/path/to/spotify-mcp-server/build/index.js` — see [Integrating with Claude Desktop, Cursor, and Cline](#integrating-with-claude-desktop-cursor-and-cline).
+Then point your MCP client at `node /absolute/path/to/spotify-mcp-server/build/index.js` — see [Integrating with MCP clients](#integrating-with-mcp-clients).
 
 ## Remote install on a Proxmox LXC (HTTP transport)
 
@@ -192,9 +192,13 @@ If a refresh ever fails (refresh token revoked, password changed, etc.), the ser
 
 > **Why two files?** `.env` is hand-edited by you and tracks credentials; `.spotify-tokens` is machine-managed and tracks short-lived tokens. Splitting them keeps your `.env` comments and ordering intact when tokens rotate.
 
-## Integrating with Claude Desktop, Cursor, and Cline
+## Integrating with MCP clients
+
+Any MCP-spec-compliant client can talk to this server. The exact field names in your client's config may vary — consult its docs — but every client accepts either a `command + args` pair (for stdio) or a `url + headers` pair (for remote HTTP). The shapes below are the common form.
 
 ### Local (stdio)
+
+Point your client at `node /absolute/path/to/spotify-mcp-server/build/index.js`:
 
 ```json
 {
@@ -207,23 +211,7 @@ If a refresh ever fails (refresh token revoked, password changed, etc.), the ser
 }
 ```
 
-For Cursor, go to the MCP tab in `Cursor Settings` (⌘+⇧+J) and add a server with the `node /absolute/path/to/spotify-mcp-server/build/index.js` command.
-
-For Cline (`cline_mcp_settings.json`):
-
-```json
-{
-  "mcpServers": {
-    "spotify": {
-      "command": "node",
-      "args": ["/absolute/path/to/spotify-mcp-server/build/index.js"],
-      "autoApprove": ["getNowPlaying", "searchSpotify", "getAvailableDevices"]
-    }
-  }
-}
-```
-
-Read-only tools (annotated with `readOnlyHint: true`) are safe candidates for `autoApprove`. Tools that mutate state (`destructiveHint: true`, write tools) should generally require confirmation.
+Tools are annotated with behavior hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`). Clients that support automatic-approval lists can safely whitelist read-only tools; tools that mutate state should require confirmation.
 
 ### Remote (HTTP, e.g. Proxmox LXC)
 
