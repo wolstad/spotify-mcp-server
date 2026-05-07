@@ -123,13 +123,30 @@ export async function startHttpServer(
       return;
     }
 
+    const sessionId = req.headers['mcp-session-id'];
+    const headerSessionId = Array.isArray(sessionId) ? sessionId[0] : sessionId;
+
+    // Spec-compliant explicit session termination: DELETE /mcp with the
+    // Mcp-Session-Id header tears down server-side state. Without this,
+    // sessions are only reaped by the idle sweep below.
+    if (req.method === 'DELETE') {
+      if (!headerSessionId) {
+        res.writeHead(400).end();
+        return;
+      }
+      const session = sessions.get(headerSessionId);
+      if (session) {
+        sessions.delete(headerSessionId);
+        await session.transport.close().catch(() => {});
+      }
+      res.writeHead(204).end();
+      return;
+    }
+
     const body =
       req.method === 'POST' || req.method === 'PUT'
         ? await readBody(req)
         : undefined;
-
-    const sessionId = req.headers['mcp-session-id'];
-    const headerSessionId = Array.isArray(sessionId) ? sessionId[0] : sessionId;
 
     if (headerSessionId) {
       const session = sessions.get(headerSessionId);
@@ -162,9 +179,15 @@ export async function startHttpServer(
         sessions.set(newId, { transport, lastActivity: Date.now() });
       },
     });
-    transport.onclose = () => {
-      if (transport.sessionId) sessions.delete(transport.sessionId);
-    };
+    // Intentionally NOT wiring transport.onclose → sessions.delete().
+    // StreamableHTTPServerTransport fires onclose when its current SSE
+    // stream ends — which happens every time a client cancels a slow
+    // request mid-response (e.g. Claude Desktop's 60s timeout, network
+    // blips, mcp-remote retries). Deleting the session in that case
+    // orphans the client: it keeps using the now-dead Mcp-Session-Id
+    // and every subsequent request 404s until the client restarts.
+    // Sessions are reaped by the idle sweep (10 min) and the explicit
+    // DELETE handler above; that's enough.
 
     const mcpServer = createServer();
     await mcpServer.connect(transport);
