@@ -164,12 +164,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/wolstad/spotify-mcp-server/m
 
 ### Defense in depth (optional)
 
-The MCP server only ever talks to two outbound hosts:
+The MCP server only ever talks to three outbound hosts:
 
 - `accounts.spotify.com` (auth + token refresh)
 - `api.spotify.com` (everything else)
+- `api.reccobeats.com` (audio features for `enrichPlaylistMetadata`)
 
-If you run network segmentation (UniFi, OPNsense, pfSense, etc.), restricting the LXC's outbound egress to those two hosts limits blast radius if the bearer token or refresh token leaks.
+If you run network segmentation (UniFi, OPNsense, pfSense, etc.), restricting the LXC's outbound egress to those three hosts limits blast radius if the bearer token or refresh token leaks.
 
 ## Authentication & token refresh
 
@@ -305,15 +306,13 @@ If your client doesn't yet support the remote MCP `url` field, you can bridge wi
 | --- | --- |
 | `getTrack` | Full details for one track as JSON: popularity, explicit, ISRC, release date, album label/type. |
 | `getArtist` | Full details for one artist as JSON: **genres**, popularity, follower count. The only way to get genre data, since Spotify doesn't put genres on track or album responses. |
-| `enrichPlaylistMetadata` | Headline tool for "organize this playlist." Fetches playlist tracks, looks up every unique artist (bounded concurrency, cap 5), and returns each track joined with `artist_genres` plus popularity, explicit, ISRC, release date, label. Also returns the playlist's deduped genre vocabulary. |
+| `enrichPlaylistMetadata` | Headline tool for "organize this playlist." Fetches playlist tracks and joins ReccoBeats audio features (energy, valence, danceability, tempo, acousticness, instrumentalness, liveness, loudness, speechiness, key, mode) onto every track, plus popularity, explicit, ISRC, release date, label. Each track carries an `audio_features_source` flag (`reccobeats` / `missing` / `error`) and the response includes a coverage rollup. |
 
 The list-style tools (`searchSpotify`, `getPlaylistTracks`, `getRecentlyPlayed`, `getUsersSavedTracks`, `getQueue`, `getNowPlaying`, `getAlbumTracks`) now also append a compact metadata suffix `[pop 75 · 2024 · E]` to each track line — popularity, release year, and an `E` flag for explicit.
 
-#### What about tempo, key, and energy?
+#### Where do tempo, key, and energy come from?
 
-Not supported. Spotify deprecated `audio-features`, `audio-analysis`, `recommendations`, `related-artists`, and 30-second preview URLs in [November 2024](https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api), and [further reduced the API surface in February 2026](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide) (removed batch GETs, removed `browse/*`, removed `artists/{id}/top-tracks`, renamed playlist `/tracks` to `/items`, collapsed library calls to a generic `/me/library`). Apps with grandfathered extended-quota access can still call the deprecated endpoints; new apps and Development Mode apps cannot.
-
-This server organizes playlists using only what's still available: **genres** (joined from artists), **popularity**, **release date**, **explicit** flag, **album type**, and **label**. That covers grouping by genre, sorting by era, separating deep cuts from hits, splitting clean vs. explicit, and indie vs. major-label — but not BPM matching.
+[ReccoBeats](https://reccobeats.com), a free public API that exposes a 1:1 superset of Spotify's deprecated `audio-features` payload. Spotify deprecated `audio-features`, `audio-analysis`, `recommendations`, `related-artists`, and 30-second preview URLs for new apps in [November 2024](https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api), and [further reduced the API surface in February 2026](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide). `enrichPlaylistMetadata` calls ReccoBeats with no auth — there is no API key to configure. Tracks ReccoBeats does not have come back with `audio_features: null` and `audio_features_source: "missing"`; an outright lookup failure marks every track as `"error"` but the rest of the metadata still returns. The artist-level `genres` field on `getArtist` has been returning empty arrays from Spotify since late 2024 — treat it as best-effort.
 
 ## Known limitations
 

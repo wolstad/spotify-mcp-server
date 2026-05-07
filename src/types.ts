@@ -75,11 +75,37 @@ export interface SpotifyTrack {
   release_date_precision?: 'year' | 'month' | 'day';
 }
 
-// Returned by enrichPlaylistMetadata: a track plus the deduped union of its
-// artists' genres. Genres only live on the artist object in Spotify's API,
-// so this join is what makes genre-based playlist organization possible.
+// Audio features sourced from ReccoBeats (https://reccobeats.com), a 1:1
+// superset of Spotify's deprecated audio-features payload. Ranges follow
+// Spotify conventions: 0..1 floats unless noted; tempo BPM; loudness dB;
+// key 0..11; mode 0/1.
+export interface AudioFeatures {
+  acousticness: number;
+  danceability: number;
+  energy: number;
+  instrumentalness: number;
+  key: number;
+  liveness: number;
+  loudness: number;
+  mode: number;
+  speechiness: number;
+  tempo: number;
+  valence: number;
+}
+
+// Per-track provenance for the audio_features field.
+//   reccobeats — features came from ReccoBeats.
+//   missing    — track was not present in ReccoBeats' catalog.
+//   error      — ReccoBeats lookup failed for the whole batch.
+export type AudioFeaturesSource = 'reccobeats' | 'missing' | 'error';
+
+// Returned by enrichPlaylistMetadata: a Spotify track joined with audio
+// features from ReccoBeats. Spotify's own audio-features endpoint is
+// deprecated for new apps, and its artist.genres data has been empty since
+// late 2024, so audio features are now the meaningful enrichment signal.
 export interface EnrichedTrack extends SpotifyTrack {
-  artist_genres: string[];
+  audio_features: AudioFeatures | null;
+  audio_features_source: AudioFeaturesSource;
 }
 
 // Shape returned by GET /v1/playlists/{id}/items (the post-Feb-2026 path

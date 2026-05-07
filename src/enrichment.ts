@@ -1,6 +1,9 @@
 import type { Track } from '@spotify/web-api-ts-sdk';
 import { z } from 'zod';
+import { fetchAudioFeaturesBySpotifyIds } from './reccobeats.js';
 import type {
+  AudioFeatures,
+  AudioFeaturesSource,
   EnrichedTrack,
   PlaylistItemsResponse,
   SpotifyArtist,
@@ -13,32 +16,6 @@ import {
   handleSpotifyRequest,
   spotifyFetch,
 } from './utils.js';
-
-// Spotify removed batch GET /artists in February 2026, so we have to fan out
-// per-artist requests. Cap concurrency to avoid hitting the rate limit when a
-// single playlist references dozens of unique artists.
-const ARTIST_FETCH_CONCURRENCY = 5;
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  const workers = Array.from(
-    { length: Math.min(concurrency, items.length) },
-    async () => {
-      while (true) {
-        const i = next++;
-        if (i >= items.length) return;
-        results[i] = await fn(items[i], i);
-      }
-    },
-  );
-  await Promise.all(workers);
-  return results;
-}
 
 function toSpotifyArtist(a: {
   id: string;
@@ -173,7 +150,7 @@ const getTrack = defineTool({
 const getArtist = defineTool({
   name: 'getArtist',
   description:
-    'Get full details for a Spotify artist, including their genres, popularity (0-100), and follower count. Genres only live on the artist object — track and album responses do not include them — so this is the canonical way to get genre information for organizing music.',
+    'Get full details for a Spotify artist, including their genres, popularity (0-100), and follower count. Note: Spotify has been returning empty `genres` arrays for most artists since late 2024 — treat genre data from this endpoint as best-effort.',
   schema: {
     id: z.string().describe('The Spotify ID of the artist'),
   },
@@ -210,7 +187,7 @@ const getArtist = defineTool({
 const enrichPlaylistMetadata = defineTool({
   name: 'enrichPlaylistMetadata',
   description:
-    'Fetch a playlist and join genre tags onto every track by looking up each unique artist. Returns each track with id, name, artists, album, popularity, explicit flag, ISRC, release date, and an artist_genres array (deduped union of every artist genre). Use this whenever the user asks to organize, group, sort, cluster, or analyze a playlist by genre, era, popularity, or explicitness. Does NOT return tempo/key/energy/danceability — those endpoints were deprecated by Spotify in November 2024.',
+    "Fetch a playlist and join ReccoBeats audio features (energy, valence, danceability, tempo, acousticness, instrumentalness, liveness, loudness, speechiness, key, mode) onto every track. Returns each track with id, name, artists, album, popularity, explicit, ISRC, release date, and an `audio_features` object (or `null` if ReccoBeats doesn't have the track). Each track also carries `audio_features_source`: 'reccobeats' | 'missing' | 'error'. Use this whenever the user asks to organize, group, sort, cluster, or analyze a playlist by mood, energy, tempo, vibe, or era. Audio features come from ReccoBeats (https://reccobeats.com), a free public substitute for Spotify's deprecated audio-features endpoint.",
   schema: {
     playlistId: z.string().describe('The Spotify ID of the playlist'),
     limit: z
@@ -252,33 +229,41 @@ const enrichPlaylistMetadata = defineTool({
         };
       }
 
-      const uniqueArtistIds = Array.from(
-        new Set(tracks.flatMap((t) => t.artists.map((a) => a.id))),
-      );
+      const uniqueTrackIds = Array.from(new Set(tracks.map((t) => t.id)));
 
-      const artists = await mapWithConcurrency(
-        uniqueArtistIds,
-        ARTIST_FETCH_CONCURRENCY,
-        (artistId) => handleSpotifyRequest((api) => api.artists.get(artistId)),
-      );
-
-      const genresByArtistId = new Map<string, string[]>();
-      for (const a of artists) {
-        genresByArtistId.set(a.id, a.genres ?? []);
+      let featuresByTrackId: Map<string, AudioFeatures | null>;
+      let lookupFailed = false;
+      let lookupError: string | undefined;
+      try {
+        featuresByTrackId =
+          await fetchAudioFeaturesBySpotifyIds(uniqueTrackIds);
+      } catch (error) {
+        lookupFailed = true;
+        lookupError = error instanceof Error ? error.message : String(error);
+        featuresByTrackId = new Map(uniqueTrackIds.map((id) => [id, null]));
       }
 
+      let hits = 0;
+      let misses = 0;
+      let errors = 0;
       const enriched: EnrichedTrack[] = tracks.map((track) => {
-        const seen = new Set<string>();
-        const artist_genres: string[] = [];
-        for (const a of track.artists) {
-          for (const g of genresByArtistId.get(a.id) ?? []) {
-            if (!seen.has(g)) {
-              seen.add(g);
-              artist_genres.push(g);
-            }
-          }
+        const features = featuresByTrackId.get(track.id) ?? null;
+        let source: AudioFeaturesSource;
+        if (lookupFailed) {
+          source = 'error';
+          errors++;
+        } else if (features) {
+          source = 'reccobeats';
+          hits++;
+        } else {
+          source = 'missing';
+          misses++;
         }
-        return { ...toSpotifyTrack(track), artist_genres };
+        return {
+          ...toSpotifyTrack(track),
+          audio_features: features,
+          audio_features_source: source,
+        };
       });
 
       const summary = {
@@ -286,10 +271,8 @@ const enrichPlaylistMetadata = defineTool({
         offset,
         returned: enriched.length,
         total: playlistItems.total,
-        unique_artists_fetched: artists.length,
-        unique_genres: Array.from(
-          new Set(enriched.flatMap((t) => t.artist_genres)),
-        ).sort(),
+        audio_features_coverage: { hits, misses, errors },
+        ...(lookupError ? { audio_features_error: lookupError } : {}),
         tracks: enriched,
       };
 
@@ -323,6 +306,4 @@ export const enrichmentTools = [getTrack, getArtist, enrichPlaylistMetadata];
 export const _internal = {
   toSpotifyTrack,
   toSpotifyArtist,
-  mapWithConcurrency,
-  ARTIST_FETCH_CONCURRENCY,
 };
