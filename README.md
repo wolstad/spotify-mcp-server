@@ -107,6 +107,11 @@ MCP_TRANSPORT=http
 MCP_HTTP_HOST=0.0.0.0
 MCP_HTTP_PORT=3000
 # MCP_HTTP_TOKEN was generated and written by the installer.
+
+# Optional: per-request HTTP timeout for Spotify and ReccoBeats calls.
+# Defaults to 30000 (30s). Caps how long a stalled upstream can wedge a
+# tool handler before the request is aborted.
+# SPOTIFY_REQUEST_TIMEOUT_MS=30000
 ```
 
 > The bearer token is the **only** thing standing between the public LAN and full control of your Spotify account. Keep it long and keep it secret.
