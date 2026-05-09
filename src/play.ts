@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { SpotifyHandlerExtra } from './types.js';
 import { defineTool } from './types.js';
-import { handleSpotifyRequest } from './utils.js';
+import { handleSpotifyRequest, spotifyFetch } from './utils.js';
 
 const playMusic = defineTool({
   name: 'playMusic',
@@ -168,14 +168,15 @@ const createPlaylist = defineTool({
   handler: async (args, _extra: SpotifyHandlerExtra) => {
     const { name, description, public: isPublic = false } = args;
 
-    const result = await handleSpotifyRequest(async (spotifyApi) => {
-      const me = await spotifyApi.currentUser.profile();
+    const body: Record<string, string | boolean> = { name, public: isPublic };
+    if (description !== undefined) body.description = description;
 
-      return await spotifyApi.playlists.createPlaylist(me.id, {
-        name,
-        description,
-        public: isPublic,
-      });
+    const result = await spotifyFetch<{
+      id: string;
+      external_urls: { spotify: string };
+    }>('/me/playlists', {
+      method: 'POST',
+      body: JSON.stringify(body),
     });
 
     return {
@@ -217,14 +218,13 @@ const addTracksToPlaylist = defineTool({
     }
 
     try {
-      const trackUris = trackIds.map((id) => `spotify:track:${id}`);
+      const uris = trackIds.map((id) => `spotify:track:${id}`);
+      const body: Record<string, unknown> = { uris };
+      if (position !== undefined) body.position = position;
 
-      await handleSpotifyRequest(async (spotifyApi) => {
-        await spotifyApi.playlists.addItemsToPlaylist(
-          playlistId,
-          trackUris,
-          position,
-        );
+      await spotifyFetch(`/playlists/${encodeURIComponent(playlistId)}/items`, {
+        method: 'POST',
+        body: JSON.stringify(body),
       });
 
       return {
