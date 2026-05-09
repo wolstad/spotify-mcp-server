@@ -19,8 +19,10 @@ vi.mock('open', () => ({
 import {
   authorizeSpotify,
   extractTrackFromPlaylistItem,
+  fetchWithTimeout,
   formatDuration,
   formatTrackMeta,
+  getRequestTimeoutMs,
   loadTokenCache,
   parseEnvFile,
   resolveStateDir,
@@ -334,6 +336,122 @@ describe('authorizeSpotify', () => {
     expect(urlMessage).toContain('client_id=test-client-id');
     expect(urlMessage).toContain('state=');
     expect(urlMessage).toContain('redirect_uri=');
+  });
+});
+
+describe('getRequestTimeoutMs', () => {
+  let original: string | undefined;
+
+  beforeEach(() => {
+    original = process.env.SPOTIFY_REQUEST_TIMEOUT_MS;
+  });
+
+  afterEach(() => {
+    if (original === undefined) {
+      Reflect.deleteProperty(process.env, 'SPOTIFY_REQUEST_TIMEOUT_MS');
+    } else {
+      process.env.SPOTIFY_REQUEST_TIMEOUT_MS = original;
+    }
+  });
+
+  it('defaults to 30 seconds when the env var is unset', () => {
+    Reflect.deleteProperty(process.env, 'SPOTIFY_REQUEST_TIMEOUT_MS');
+    expect(getRequestTimeoutMs()).toBe(30_000);
+  });
+
+  it('honours a positive numeric env var override', () => {
+    process.env.SPOTIFY_REQUEST_TIMEOUT_MS = '5000';
+    expect(getRequestTimeoutMs()).toBe(5000);
+  });
+
+  it('falls back to the default when the env var is non-numeric or non-positive', () => {
+    process.env.SPOTIFY_REQUEST_TIMEOUT_MS = 'nope';
+    expect(getRequestTimeoutMs()).toBe(30_000);
+    process.env.SPOTIFY_REQUEST_TIMEOUT_MS = '0';
+    expect(getRequestTimeoutMs()).toBe(30_000);
+    process.env.SPOTIFY_REQUEST_TIMEOUT_MS = '-5';
+    expect(getRequestTimeoutMs()).toBe(30_000);
+  });
+});
+
+describe('fetchWithTimeout', () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('passes the response through when fetch resolves before the timeout', async () => {
+    const expected = new Response('ok', { status: 200 });
+    fetchSpy.mockResolvedValue(expected);
+
+    const result = await fetchWithTimeout('https://example.com', {}, 10_000);
+
+    expect(result).toBe(expected);
+  });
+
+  it('aborts the request when fetch stalls past the timeout', async () => {
+    fetchSpy.mockImplementation(
+      (_url, init?: RequestInit) =>
+        new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(init.signal?.reason ?? new Error('aborted'));
+          });
+        }),
+    );
+
+    const start = Date.now();
+    await expect(
+      fetchWithTimeout('https://example.com', {}, 30),
+    ).rejects.toThrow(/timed out after 30ms/);
+    // Fail loudly if we hung past the timeout window.
+    expect(Date.now() - start).toBeLessThan(2_000);
+  });
+
+  it("propagates the caller's abort signal to the inner fetch", async () => {
+    const ctrl = new AbortController();
+    fetchSpy.mockImplementation(
+      (_url, init?: RequestInit) =>
+        new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(init.signal?.reason ?? new Error('aborted'));
+          });
+        }),
+    );
+
+    const promise = fetchWithTimeout(
+      'https://example.com',
+      { signal: ctrl.signal },
+      60_000,
+    );
+    ctrl.abort(new Error('caller cancelled'));
+
+    await expect(promise).rejects.toThrow(/caller cancelled/);
+  });
+
+  it('aborts immediately when the caller signal is already aborted', async () => {
+    const ctrl = new AbortController();
+    ctrl.abort(new Error('already gone'));
+    fetchSpy.mockImplementation(
+      (_url, init?: RequestInit) =>
+        new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(init.signal?.reason ?? new Error('aborted'));
+          });
+          // Defensive: surface synchronous already-aborted state too.
+          if (init?.signal?.aborted) {
+            reject(init.signal.reason);
+          }
+        }),
+    );
+
+    await expect(
+      fetchWithTimeout('https://example.com', { signal: ctrl.signal }, 60_000),
+    ).rejects.toThrow(/already gone/);
   });
 });
 

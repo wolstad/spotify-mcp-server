@@ -1,4 +1,5 @@
 import type { AudioFeatures } from './types.js';
+import { fetchWithTimeout } from './utils.js';
 
 // ReccoBeats (https://reccobeats.com) is a free, no-auth public API that
 // exposes a 1:1 superset of Spotify's deprecated audio-features endpoint.
@@ -88,13 +89,17 @@ function parseSpotifyIdFromHref(href: string | undefined): string | null {
 
 async function reccobeatsFetch<T>(path: string): Promise<T> {
   const url = `${RECCOBEATS_API_BASE}${path}`;
-  let response = await fetch(url, { headers: { Accept: 'application/json' } });
+  let response = await fetchWithTimeout(url, {
+    headers: { Accept: 'application/json' },
+  });
 
   // Respect a single 429 retry. ReccoBeats sets Retry-After (seconds).
   if (response.status === 429) {
     const retryAfter = Number(response.headers.get('Retry-After')) || 1;
     await sleep(Math.min(retryAfter, 10) * 1000);
-    response = await fetch(url, { headers: { Accept: 'application/json' } });
+    response = await fetchWithTimeout(url, {
+      headers: { Accept: 'application/json' },
+    });
   }
 
   if (!response.ok) {

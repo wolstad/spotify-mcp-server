@@ -144,6 +144,48 @@ export function parseEnvFile(contents: string): Record<string, string> {
   return result;
 }
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
+export function getRequestTimeoutMs(): number {
+  const raw = process.env.SPOTIFY_REQUEST_TIMEOUT_MS;
+  const parsed = raw ? Number(raw) : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_REQUEST_TIMEOUT_MS;
+}
+
+// Wraps `fetch` with an AbortController-based timeout. Node's native fetch
+// has no default timeout, so any stalled connection (network blip, slow
+// upstream) hangs the awaiting handler forever — and because the MCP HTTP
+// transport awaits the tool handler, a single hung request wedges the
+// entire session until the client restarts.
+export async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs: number = getRequestTimeoutMs(),
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(
+    () => ctrl.abort(new Error(`Request timed out after ${timeoutMs}ms`)),
+    timeoutMs,
+  );
+  const callerSignal = init.signal;
+  const onCallerAbort = () => ctrl.abort(callerSignal?.reason);
+  if (callerSignal) {
+    if (callerSignal.aborted) {
+      ctrl.abort(callerSignal.reason);
+    } else {
+      callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+    }
+  }
+  try {
+    return await fetch(input, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener('abort', onCallerAbort);
+  }
+}
+
 let cachedSpotifyApi: SpotifyApi | null = null;
 
 export async function createSpotifyApi(): Promise<SpotifyApi> {
@@ -191,6 +233,7 @@ export async function createSpotifyApi(): Promise<SpotifyApi> {
     cachedSpotifyApi = SpotifyApi.withAccessToken(
       credentials.clientId,
       accessToken,
+      { fetch: fetchWithTimeout },
     );
     return cachedSpotifyApi;
   }
@@ -199,6 +242,8 @@ export async function createSpotifyApi(): Promise<SpotifyApi> {
   cachedSpotifyApi = SpotifyApi.withClientCredentials(
     credentials.clientId,
     credentials.clientSecret,
+    [],
+    { fetch: fetchWithTimeout },
   );
   return cachedSpotifyApi;
 }
@@ -244,7 +289,7 @@ async function exchangeCodeForToken(
   params.append('code', code);
   params.append('redirect_uri', credentials.redirectUri);
 
-  const response = await fetch(tokenUrl, {
+  const response = await fetchWithTimeout(tokenUrl, {
     method: 'POST',
     headers: {
       Authorization: authHeader,
@@ -281,7 +326,7 @@ async function refreshAccessToken(
   params.append('grant_type', 'refresh_token');
   params.append('refresh_token', refreshToken);
 
-  const response = await fetch(tokenUrl, {
+  const response = await fetchWithTimeout(tokenUrl, {
     method: 'POST',
     headers: {
       Authorization: authHeader,
@@ -518,7 +563,7 @@ export async function spotifyFetch<T = unknown>(
   const accessToken = await getCurrentAccessToken();
   const url = path.startsWith('http') ? path : `${SPOTIFY_API_BASE}${path}`;
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     ...init,
     headers: {
       Authorization: `Bearer ${accessToken}`,
