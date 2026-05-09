@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { SpotifyHandlerExtra } from './types.js';
 import { defineTool } from './types.js';
-import { handleSpotifyRequest } from './utils.js';
+import { handleSpotifyRequest, spotifyFetch } from './utils.js';
 
 const getPlaylist = defineTool({
   name: 'getPlaylist',
@@ -171,12 +171,12 @@ const removeTracksFromPlaylist = defineTool({
 
     try {
       const tracks = trackIds.map((id) => ({ uri: `spotify:track:${id}` }));
+      const body: Record<string, unknown> = { tracks };
+      if (snapshotId) body.snapshot_id = snapshotId;
 
-      await handleSpotifyRequest(async (spotifyApi) => {
-        await spotifyApi.playlists.removeItemsFromPlaylist(playlistId, {
-          tracks,
-          ...(snapshotId ? { snapshot_id: snapshotId } : {}),
-        });
+      await spotifyFetch(`/playlists/${encodeURIComponent(playlistId)}/items`, {
+        method: 'DELETE',
+        body: JSON.stringify(body),
       });
 
       return {
@@ -238,13 +238,16 @@ const reorderPlaylistItems = defineTool({
       args;
 
     try {
-      await handleSpotifyRequest(async (spotifyApi) => {
-        await spotifyApi.playlists.updatePlaylistItems(playlistId, {
-          range_start: rangeStart,
-          insert_before: insertBefore,
-          ...(rangeLength !== undefined ? { range_length: rangeLength } : {}),
-          ...(snapshotId ? { snapshot_id: snapshotId } : {}),
-        });
+      const body: Record<string, unknown> = {
+        range_start: rangeStart,
+        insert_before: insertBefore,
+      };
+      if (rangeLength !== undefined) body.range_length = rangeLength;
+      if (snapshotId) body.snapshot_id = snapshotId;
+
+      await spotifyFetch(`/playlists/${encodeURIComponent(playlistId)}/items`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
       });
 
       const count = rangeLength ?? 1;
